@@ -965,9 +965,10 @@ class ShotViewerWidget(QWidget):
         """Upload a (possibly filtered/strided) point subset to GPU.
 
         dpp: data units (nm) per screen pixel — the true zoom scale.
-        stride: decimation stride (>=1). With additive blending, removing
-                1/stride of the shots reduces accumulated brightness by
-                that factor, so per-shot alpha is multiplied by stride.
+        stride: decimation stride (>=1). In Gaussian mode, marker size is
+                inflated by sqrt(stride) so each surviving shot covers
+                stride× the area, exactly compensating for the 1/stride
+                reduction in shot count under additive blending.
         """
 
         # Ensure each marker is at least a few pixels wide in data units.
@@ -982,19 +983,25 @@ class ShotViewerWidget(QWidget):
             base_sizes = np.maximum(dsizes, min_size)
 
         if self._marker_mode == 'gaussian':
+            # Stride size compensation: with additive blending and uniform
+            # shot density, total brightness ∝ ρ × α × FWHM².  Decimation
+            # sets ρ' = ρ/stride, so FWHM' = FWHM × √stride keeps
+            # brightness constant — each surviving shot's Gaussian footprint
+            # covers stride× the area, smoothly filling gaps.
+            if stride > 1.0:
+                size_scale = _math.sqrt(stride)
+                if np.isscalar(base_sizes):
+                    base_sizes = base_sizes * size_scale
+                else:
+                    base_sizes = base_sizes * size_scale
+
             # Additive Gaussian accumulation layer.
-            # Alpha INCREASES with zoom-out: zoomed-in Gaussians are big and
-            # overlap heavily (low alpha), zoomed-out are tiny (high alpha).
             # Quadratic scaling: overlap density grows as (size/dpp)², so
             # alpha must shrink quadratically at close zoom.
             t = dpp**2 / (dpp**2 + _ALPHA_REF_DPP**2)  # 0 at close, →1 far
-            base_alpha = _ALPHA_NEAR + (_ALPHA_FAR - _ALPHA_NEAR) * t
-            # Stride compensation: with additive blending, rendering 1/stride
-            # of the shots reduces accumulated brightness proportionally.
-            # Multiply per-shot alpha by stride so total brightness is stable.
-            alpha = min(base_alpha * stride, 1.0)
+            alpha = _ALPHA_NEAR + (_ALPHA_FAR - _ALPHA_NEAR) * t
             self._last_overlap_alpha = alpha
-            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} base_alpha={base_alpha:.5f} stride={stride:.2f} alpha={alpha:.5f}")
+            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f} stride={stride:.2f} size_scale={_math.sqrt(stride):.3f}")
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,

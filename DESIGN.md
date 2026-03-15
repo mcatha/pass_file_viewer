@@ -131,7 +131,7 @@ $$\alpha = \alpha_{\text{near}} + (\alpha_{\text{far}} - \alpha_{\text{near}}) \
 
 At close zoom, `t → 0` and `alpha → 1.0` (full intensity). At wide zoom, `t → 1` and `alpha → 0.01`. The quadratic scaling matches the fact that overlap density grows as $(size/dpp)^2$.
 
-**Stride compensation**: when decimation stride > 1, only 1/stride of the shots are drawn. With additive blending, that would reduce accumulated brightness proportionally. To compensate, the uploaded alpha is `base_alpha × stride`, clamped to 1.0. This keeps brightness continuous across the stride = 1 → >1 transition.
+**Stride size compensation**: when decimation stride > 1, only 1/stride of the shots are drawn. With additive blending, total brightness ∝ ρ × α × FWHM². Since ρ drops to ρ/stride, marker FWHM is inflated by √stride so each surviving shot's Gaussian footprint covers stride× the area. This preserves accumulated brightness smoothly — unlike alpha compensation, which can't fill the physical gaps between removed shots.
 
 #### Disc mode (alternative)
 
@@ -223,7 +223,7 @@ _MAX_RENDERED     = 2_097_152  # hard cap on rendered shots (2²¹)
 2. **Density-based budget**: the occupied screen area is estimated from `min(data_extent, viewport_extent)` per axis, converted to pixels via `dpp`. Budget = `screen_px × _MAX_SHOTS_PER_PX`, capped at `_MAX_RENDERED`. No floor — when the data covers only a few pixels, very few shots are rendered.
 3. **Stride**: `stride = max(1, n_visible / budget)`. When stride ≤ 1, all visible shots are drawn.
 4. **Priority-based selection**: each shot is assigned a fixed random priority at load time, with a mild dwell bias (15 %): higher-dwell shots get lower priority values (more likely to survive decimation). The top `budget` shots by priority are selected via `np.argpartition` (O(n)).
-5. **Stride compensation** (Gaussian mode): with additive blending, accumulated brightness is proportional to the number of overlapping shots. When stride removes shots, per-shot alpha must increase proportionally to maintain stable brightness. The uploaded alpha is `base_alpha × stride`, clamped to 1.0. This eliminates the abrupt brightness drop that would otherwise occur when stride transitions from 1 to >1.
+5. **Stride size compensation** (Gaussian mode): with additive blending, total brightness ∝ density × alpha × FWHM². Decimation reduces density by 1/stride, so marker FWHM is inflated by `sqrt(stride)`, making each surviving shot cover stride× the area. This fills gaps smoothly — unlike alpha-only compensation, which creates bright speckle where shots are locally sparse.
 6. **Cache gating**: a composite key of quantised viewport bounds + stride + `round(log₂(dpp) × 20)` prevents redundant GPU uploads when the view hasn't meaningfully changed.
 7. **All visuals synced**: the same decimated index set is uploaded to all active marker layers.
 
