@@ -368,7 +368,6 @@ pass_viewer/
 ├── app_icon.ico            # Application icon
 ├── requirements.txt        # Python dependencies
 ├── DESIGN.md               # This document
-├── .copilot-instructions.md # Copilot behaviour rules
 └── PassFileViewer.spec     # PyInstaller spec for distribution
 ```
 
