@@ -1,0 +1,37 @@
+"""
+Pass File Viewer — entry point.
+
+Usage:
+    python main.py                     # launch empty, open via File menu
+    python main.py path/to/file.pass   # open a .pass file immediately
+"""
+
+import sys
+from pathlib import Path
+
+# vispy must use PyQt6 backend before any other vispy import
+from vispy import app as vispy_app
+vispy_app.use_app("pyqt6")
+
+from PyQt6.QtWidgets import QApplication
+from main_window import MainWindow
+
+
+def main() -> None:
+    qapp = QApplication(sys.argv)
+    qapp.setApplicationName("Pass File Viewer")
+
+    # Accept an optional .pass file path on the command line
+    initial_file = None
+    if len(sys.argv) > 1:
+        p = Path(sys.argv[1])
+        if p.is_file():
+            initial_file = str(p)
+
+    window = MainWindow(initial_file=initial_file)
+    window.show()
+    sys.exit(qapp.exec())
+
+
+if __name__ == "__main__":
+    main()
