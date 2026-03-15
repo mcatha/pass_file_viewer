@@ -24,7 +24,7 @@ The quadratic alpha curve, priority-based decimation, minimum-size inflation, an
 | **Disc markers (alt mode)** | Hard-edged discs with additive white overlap layer for brightening toward white |
 | **Zoom-adaptive alpha** | Quadratic alpha curve prevents blowout at wide zoom while keeping close-zoom overlap visible |
 | **FWHM slider** | Logarithmic slider (0.1–1000 nm/µs) controls shot size scaling in real time |
-| **Priority-based decimation** | Fixed per-shot priority with dwell and spatial bias; stable across pan/zoom |
+| **Priority-based decimation** | Fixed per-shot priority with dwell bias; stride compensation keeps brightness stable |
 | **Interactive selection** | Single-click and rubber-band box selection with side-pane data table |
 | **Shot connections** | Toggle-able lines between consecutive shots |
 | **Colour customisation** | 5-category colour menu with presets and custom colour picker |
@@ -131,6 +131,8 @@ $$\alpha = \alpha_{\text{near}} + (\alpha_{\text{far}} - \alpha_{\text{near}}) \
 
 At close zoom, `t → 0` and `alpha → 1.0` (full intensity). At wide zoom, `t → 1` and `alpha → 0.01`. The quadratic scaling matches the fact that overlap density grows as $(size/dpp)^2$.
 
+**Stride compensation**: when decimation stride > 1, only 1/stride of the shots are drawn. With additive blending, that would reduce accumulated brightness proportionally. To compensate, the uploaded alpha is `base_alpha × stride`, clamped to 1.0. This keeps brightness continuous across the stride = 1 → >1 transition.
+
 #### Disc mode (alternative)
 
 Two `Markers` visuals composited on the same scene node:
@@ -220,20 +222,18 @@ _MAX_RENDERED     = 2_097_152  # hard cap on rendered shots (2²¹)
 1. **Viewport cull**: AABB mask keeps only shots inside the visible area + 5 % margin + half the largest disc diameter. Viewport bounds are rotation-aware (4-corner screen → data mapping).
 2. **Density-based budget**: the occupied screen area is estimated from `min(data_extent, viewport_extent)` per axis, converted to pixels via `dpp`. Budget = `screen_px × _MAX_SHOTS_PER_PX`, capped at `_MAX_RENDERED`. No floor — when the data covers only a few pixels, very few shots are rendered.
 3. **Stride**: `stride = max(1, n_visible / budget)`. When stride ≤ 1, all visible shots are drawn.
-4. **Priority-based selection**: each shot is assigned a fixed random priority at load time, with two mild multiplicative biases:
-   - **Dwell bias** (15 %): higher-dwell shots get lower priority values (more likely to survive decimation).
-   - **Sparse bias** (`α = 0.40`): shots in denser grid cells have priority scaled up by `cell_count^α`, making per-shot selection there slightly less likely. Selection from cell $i$ is proportional to $N_i^{1-\alpha}$, so dense regions always dominate — no region dropout.
-   
-   The top `budget` shots by priority are selected via `np.argpartition` (O(n)).
-5. **Cache gating**: a composite key of quantised viewport bounds + stride + `round(log₂(dpp) × 20)` prevents redundant GPU uploads when the view hasn't meaningfully changed.
-6. **All visuals synced**: the same decimated index set is uploaded to all active marker layers.
+4. **Priority-based selection**: each shot is assigned a fixed random priority at load time, with a mild dwell bias (15 %): higher-dwell shots get lower priority values (more likely to survive decimation). The top `budget` shots by priority are selected via `np.argpartition` (O(n)).
+5. **Stride compensation** (Gaussian mode): with additive blending, accumulated brightness is proportional to the number of overlapping shots. When stride removes shots, per-shot alpha must increase proportionally to maintain stable brightness. The uploaded alpha is `base_alpha × stride`, clamped to 1.0. This eliminates the abrupt brightness drop that would otherwise occur when stride transitions from 1 to >1.
+6. **Cache gating**: a composite key of quantised viewport bounds + stride + `round(log₂(dpp) × 20)` prevents redundant GPU uploads when the view hasn't meaningfully changed.
+7. **All visuals synced**: the same decimated index set is uploaded to all active marker layers.
 
 ### Design properties
 
 - **Stable across pan/zoom**: fixed per-shot priorities mean the same shots survive decimation regardless of small viewport shifts — no visible flicker.
+- **Smooth stride transitions**: stride compensation keeps brightness continuous even as decimation kicks in.
 - **No rotation artefacts**: viewport bounds use 4-corner mapping; `dpp` is computed from the full transform chain via Euclidean distance, not just the X component.
 - **No blowout**: density-based budget limits on-screen overlap count; hard cap prevents GPU overload.
-- **Importance-aware**: dwell bias keeps larger exposures visible preferentially; sparse bias gently favours isolated shots.
+- **Importance-aware**: dwell bias keeps larger exposures visible preferentially.
 
 ---
 

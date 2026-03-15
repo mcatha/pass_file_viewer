@@ -580,19 +580,8 @@ class ShotViewerWidget(QWidget):
         self._all_sizes = self._sizes
         # ─── Fixed per-shot priority (computed once at load time) ────────
         # Base = uniform random → perfectly proportional decimation.
-        # Two mild multiplicative biases that can nudge but never dominate:
-        #
         # Dwell bias: bigger dwell → priority scaled DOWN by up to 15%
         #   (more likely to survive decimation).
-        #
-        # Sparse bias: shots in denser cells have priority scaled UP by
-        #   cell_count^α.  This spreads the dense-cell priority range,
-        #   making per-shot selection there slightly less likely.
-        #   α=0 → pure proportional;  α=1 → spatially uniform.
-        #   Small α keeps it close to proportional with a gentle nudge.
-        #
-        # Selection from cell i ∝ N_i^(1−α), so dense regions always
-        # dominate — no region dropout at any stride level.
         n_shots = len(self._positions)
         rng = np.random.default_rng(seed=42)
         priority = rng.random(n_shots).astype(np.float32)          # [0, 1)
@@ -603,22 +592,6 @@ class ShotViewerWidget(QWidget):
         if dwell_range > 0:
             dwell_norm = ((dwell_sizes - dmin_sz) / dwell_range).astype(np.float32)
             priority *= (1.0 - _DWELL_WEIGHT * dwell_norm)
-
-        # Sparse bias: density^α scaling per grid cell
-        _GRID = 512
-        _SPARSE_ALPHA = 0.40                                       # 0 = proportional, 1 = uniform
-        pmin = self._positions.min(axis=0)
-        pmax = self._positions.max(axis=0)
-        span = (pmax - pmin).astype(np.float64)
-        span[span == 0] = 1.0
-        gx = np.clip(((self._positions[:, 0] - pmin[0]) / span[0] * _GRID).astype(np.int32),
-                      0, _GRID - 1)
-        gy = np.clip(((self._positions[:, 1] - pmin[1]) / span[1] * _GRID).astype(np.int32),
-                      0, _GRID - 1)
-        flat_idx = gx * _GRID + gy
-        grid_counts = np.bincount(flat_idx, minlength=_GRID * _GRID)
-        cell_pop = grid_counts[flat_idx].astype(np.float32)        # per-shot cell population
-        priority *= np.power(cell_pop, _SPARSE_ALPHA)
 
         self._shot_priority = priority
         # Cache data bounding box for density calculations
@@ -974,7 +947,7 @@ class ShotViewerWidget(QWidget):
 
         # Initial stride: camera isn't ready yet, use canvas pixel count as budget estimate
         canvas_px = max(self._canvas.native.width() * self._canvas.native.height(), 1)
-        initial_budget = min(max(5_000, int(canvas_px * _MAX_SHOTS_PER_PX)), _MAX_RENDERED)
+        initial_budget = min(int(canvas_px * _MAX_SHOTS_PER_PX), _MAX_RENDERED)
         stride = max(1.0, float(round(n / initial_budget)))
         self._decim_stride = stride
         idx = self._priority_indices(np.arange(n, dtype=np.intp), stride)
@@ -982,16 +955,19 @@ class ShotViewerWidget(QWidget):
         self._uploaded_positions = dpos
         dsizes = self._uniform_size if self._uniform_size is not None else self._all_sizes[idx]
         self._uploaded_sizes = dsizes
-        self._upload_view(dpos, dsizes)
+        self._upload_view(dpos, dsizes, stride=stride)
         self._shot_count_label.setText(f"{len(dpos):,} / {n:,} shots")
         self._shot_count_label.adjustSize()
         self._shot_count_label.setVisible(True)
 
     def _upload_view(self, dpos: np.ndarray, dsizes,
-                     dpp: float = 0.0) -> None:
+                     dpp: float = 0.0, stride: float = 1.0) -> None:
         """Upload a (possibly filtered/strided) point subset to GPU.
 
         dpp: data units (nm) per screen pixel — the true zoom scale.
+        stride: decimation stride (>=1). With additive blending, removing
+                1/stride of the shots reduces accumulated brightness by
+                that factor, so per-shot alpha is multiplied by stride.
         """
 
         # Ensure each marker is at least a few pixels wide in data units.
@@ -1012,9 +988,13 @@ class ShotViewerWidget(QWidget):
             # Quadratic scaling: overlap density grows as (size/dpp)², so
             # alpha must shrink quadratically at close zoom.
             t = dpp**2 / (dpp**2 + _ALPHA_REF_DPP**2)  # 0 at close, →1 far
-            alpha = _ALPHA_NEAR + (_ALPHA_FAR - _ALPHA_NEAR) * t
+            base_alpha = _ALPHA_NEAR + (_ALPHA_FAR - _ALPHA_NEAR) * t
+            # Stride compensation: with additive blending, rendering 1/stride
+            # of the shots reduces accumulated brightness proportionally.
+            # Multiply per-shot alpha by stride so total brightness is stable.
+            alpha = min(base_alpha * stride, 1.0)
             self._last_overlap_alpha = alpha
-            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f}")
+            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} base_alpha={base_alpha:.5f} stride={stride:.2f} alpha={alpha:.5f}")
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,
@@ -1116,7 +1096,7 @@ class ShotViewerWidget(QWidget):
             else:
                 dsizes = self._all_sizes[idx]
             self._uploaded_sizes = dsizes
-            self._upload_view(dpos, dsizes, dpp)
+            self._upload_view(dpos, dsizes, dpp, stride)
 
         # Always update status label
         rendered = len(getattr(self, '_uploaded_positions', []))
