@@ -965,10 +965,8 @@ class ShotViewerWidget(QWidget):
         """Upload a (possibly filtered/strided) point subset to GPU.
 
         dpp: data units (nm) per screen pixel — the true zoom scale.
-        stride: decimation stride (>=1). In Gaussian mode, marker size is
-                inflated by sqrt(stride) so each surviving shot covers
-                stride× the area, exactly compensating for the 1/stride
-                reduction in shot count under additive blending.
+        stride: decimation stride (>=1). Fed into the alpha curve to
+                partially compensate for reduced additive brightness.
         """
 
         # Ensure each marker is at least a few pixels wide in data units.
@@ -983,25 +981,17 @@ class ShotViewerWidget(QWidget):
             base_sizes = np.maximum(dsizes, min_size)
 
         if self._marker_mode == 'gaussian':
-            # Stride size compensation: with additive blending and uniform
-            # shot density, total brightness ∝ ρ × α × FWHM².  Decimation
-            # sets ρ' = ρ/stride, so FWHM' = FWHM × √stride keeps
-            # brightness constant — each surviving shot's Gaussian footprint
-            # covers stride× the area, smoothly filling gaps.
-            if stride > 1.0:
-                size_scale = _math.sqrt(stride)
-                if np.isscalar(base_sizes):
-                    base_sizes = base_sizes * size_scale
-                else:
-                    base_sizes = base_sizes * size_scale
-
             # Additive Gaussian accumulation layer.
-            # Quadratic scaling: overlap density grows as (size/dpp)², so
-            # alpha must shrink quadratically at close zoom.
-            t = dpp**2 / (dpp**2 + _ALPHA_REF_DPP**2)  # 0 at close, →1 far
+            # Alpha curve: quadratic with stride folded into the reference.
+            # At stride=1 this is the original formula.  As stride grows,
+            # the effective REF widens, keeping alpha higher (closer to NEAR)
+            # to partially compensate for fewer overlapping shots.
+            # t = dpp² / (dpp² + stride × REF²)
+            ref2 = stride * _ALPHA_REF_DPP**2
+            t = dpp**2 / (dpp**2 + ref2)  # 0 at close, →1 far
             alpha = _ALPHA_NEAR + (_ALPHA_FAR - _ALPHA_NEAR) * t
             self._last_overlap_alpha = alpha
-            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f} stride={stride:.2f} size_scale={_math.sqrt(stride):.3f}")
+            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f} stride={stride:.2f}")
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,
