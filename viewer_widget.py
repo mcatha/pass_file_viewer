@@ -965,20 +965,13 @@ class ShotViewerWidget(QWidget):
         """Upload a (possibly filtered/strided) point subset to GPU.
 
         dpp: data units (nm) per screen pixel — the true zoom scale.
-        stride: decimation stride (>=1). In Gaussian mode, the minimum
-                marker size floor is inflated by √stride and alpha is
-                shifted via the curve denominator to compensate for
-                fewer additive contributions.
+        stride: decimation stride (>=1). Logged for diagnostics.
         """
 
         # Ensure each marker is at least a few pixels wide in data units.
         # Gaussians need ~4px to show their smooth falloff; discs need 1px.
-        # When stride > 1, inflate the Gaussian minimum by √stride so
-        # surviving shots' footprints overlap enough to fill gaps left by
-        # removed shots.  Only the FLOOR is inflated — markers whose true
-        # FWHM already exceeds the floor are unchanged.
         if self._marker_mode == 'gaussian':
-            min_size = dpp * 4.0 * _math.sqrt(stride)
+            min_size = dpp * 4.0
         else:
             min_size = dpp
         if np.isscalar(dsizes):
@@ -988,16 +981,12 @@ class ShotViewerWidget(QWidget):
 
         if self._marker_mode == 'gaussian':
             # Additive Gaussian accumulation layer.
-            # Alpha curve: quadratic with stride folded into the reference.
-            # At stride=1 this is the original formula.  As stride grows,
-            # the effective REF widens, keeping alpha higher (closer to NEAR)
-            # to partially compensate for fewer overlapping shots.
-            ref2 = stride * _ALPHA_REF_DPP**2
-            t = dpp**2 / (dpp**2 + ref2)  # 0 at close, →1 far
+            # Quadratic alpha curve: overlap density grows as (size/dpp)²,
+            # so alpha must shrink quadratically at close zoom.
+            t = dpp**2 / (dpp**2 + _ALPHA_REF_DPP**2)  # 0 at close, →1 far
             alpha = _ALPHA_NEAR + (_ALPHA_FAR - _ALPHA_NEAR) * t
             self._last_overlap_alpha = alpha
-            min_px = 4.0 * _math.sqrt(stride)
-            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f} stride={stride:.2f} min_px={min_px:.1f}")
+            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f} stride={stride:.2f}")
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,
