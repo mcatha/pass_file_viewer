@@ -45,7 +45,7 @@ _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
 _AXIS_LABEL_FONT = QFont("Consolas", 17, QFont.Weight.Bold)
 _STRIDE1_DPP = 2.5         # nm/px at which stride = 1 (below = no stride)
 _STRIDE_EXPONENT = 0.4     # power curve: <1 ramps fast then flattens, >1 gentle then steep
-_MAX_SHOTS_PER_PX = 3.0    # target: ~3 shots per screen pixel of data coverage
+_MAX_SHOTS_PER_PX = 6.0    # target: ~6 shots per screen pixel of data coverage
 _MAX_RENDERED = 2_097_152   # hard cap on rendered shots (2^21)
 print(f"[INIT] _MAX_SHOTS_PER_PX = {_MAX_SHOTS_PER_PX}, _MAX_RENDERED = {_MAX_RENDERED}")
 _ALPHA_REF_DPP = 20.0   # nm/px at which Gaussian alpha reaches midpoint
