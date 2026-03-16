@@ -992,13 +992,22 @@ class ShotViewerWidget(QWidget):
             base_sizes = np.maximum(dsizes, min_size)
 
         if self._marker_mode == 'gaussian':
+            # Stride compensation: inflate markers by √stride so each
+            # surviving shot covers the gap left by its removed neighbors.
+            if stride > 1.0:
+                scale = _math.sqrt(stride)
+                if np.isscalar(base_sizes):
+                    base_sizes = base_sizes * scale
+                else:
+                    base_sizes = base_sizes * scale
+
             # Additive Gaussian accumulation layer.
             # Quadratic alpha curve: overlap density grows as (size/dpp)²,
             # so alpha must shrink quadratically at close zoom.
             t = dpp**2 / (dpp**2 + _ALPHA_REF_DPP**2)  # 0 at close, →1 far
             alpha = _ALPHA_NEAR + (_ALPHA_FAR - _ALPHA_NEAR) * t
             self._last_overlap_alpha = alpha
-            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f} stride={stride:.2f}")
+            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f} stride={stride:.2f} size_scale={_math.sqrt(max(stride,1.0)):.2f}")
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,
