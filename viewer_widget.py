@@ -982,8 +982,11 @@ class ShotViewerWidget(QWidget):
 
         # Ensure each marker is at least a few pixels wide in data units.
         # Gaussians need ~4px to show their smooth falloff; discs need 1px.
+        # In Gaussian mode with stride > 1, inflate the floor by √stride
+        # so each surviving shot just covers the gap left by removed neighbors.
+        # Shots already larger than the floor are unchanged.
         if self._marker_mode == 'gaussian':
-            min_size = dpp * 4.0
+            min_size = dpp * 4.0 * _math.sqrt(max(stride, 1.0))
         else:
             min_size = dpp
         if np.isscalar(dsizes):
@@ -992,16 +995,6 @@ class ShotViewerWidget(QWidget):
             base_sizes = np.maximum(dsizes, min_size)
 
         if self._marker_mode == 'gaussian':
-            # Stride compensation: inflate markers by √stride so each
-            # surviving shot covers the gap left by its removed neighbors.
-            if stride > 1.0:
-                scale = _math.sqrt(stride)
-                if np.isscalar(base_sizes):
-                    base_sizes = base_sizes * scale
-                else:
-                    base_sizes = base_sizes * scale
-
-            # Additive Gaussian accumulation layer.
             # Quadratic alpha curve: overlap density grows as (size/dpp)²,
             # so alpha must shrink quadratically at close zoom.
             t = dpp**2 / (dpp**2 + _ALPHA_REF_DPP**2)  # 0 at close, →1 far
