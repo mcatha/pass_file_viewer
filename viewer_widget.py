@@ -45,9 +45,17 @@ _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
 _AXIS_LABEL_FONT = QFont("Consolas", 17, QFont.Weight.Bold)
 _STRIDE1_DPP = 2.5         # nm/px at which stride = 1 (below = no stride)
 _STRIDE_EXPONENT = 0.4     # power curve: <1 ramps fast then flattens, >1 gentle then steep
-_MAX_SHOTS_PER_PX = 6.0    # target: ~6 shots per screen pixel of data coverage
-_MAX_RENDERED = 2_097_152   # hard cap on rendered shots (2^21)
-print(f"[INIT] _MAX_SHOTS_PER_PX = {_MAX_SHOTS_PER_PX}, _MAX_RENDERED = {_MAX_RENDERED}")
+# ── Mode-specific budget parameters ──
+# Gaussian (additive): brightness comes from accumulation, so we need
+# high shot density even when data covers few screen pixels.
+_GAUSS_SHOTS_PER_PX = 6.0       # per-pixel density target
+_GAUSS_MIN_BUDGET   = 200_000   # floor: never decimate below this
+_GAUSS_MAX_RENDERED = 2_097_152  # hard cap (2^21)
+# Disc (alpha blend): each shot is fully opaque, so fewer are fine.
+_DISC_SHOTS_PER_PX  = 3.0
+_DISC_MIN_BUDGET    = 0          # no floor
+_DISC_MAX_RENDERED  = 2_097_152
+print(f"[INIT] gauss={_GAUSS_SHOTS_PER_PX}/px min={_GAUSS_MIN_BUDGET} cap={_GAUSS_MAX_RENDERED}  disc={_DISC_SHOTS_PER_PX}/px cap={_DISC_MAX_RENDERED}")
 _ALPHA_REF_DPP = 20.0   # nm/px at which Gaussian alpha reaches midpoint
                          # between _ALPHA_NEAR and _ALPHA_FAR
 
@@ -947,7 +955,11 @@ class ShotViewerWidget(QWidget):
 
         # Initial stride: camera isn't ready yet, use canvas pixel count as budget estimate
         canvas_px = max(self._canvas.native.width() * self._canvas.native.height(), 1)
-        initial_budget = min(int(canvas_px * _MAX_SHOTS_PER_PX), _MAX_RENDERED)
+        if self._marker_mode == 'gaussian':
+            spp, min_b, max_r = _GAUSS_SHOTS_PER_PX, _GAUSS_MIN_BUDGET, _GAUSS_MAX_RENDERED
+        else:
+            spp, min_b, max_r = _DISC_SHOTS_PER_PX, _DISC_MIN_BUDGET, _DISC_MAX_RENDERED
+        initial_budget = min(max(min_b, int(canvas_px * spp)), max_r)
         stride = max(1.0, float(round(n / initial_budget)))
         self._decim_stride = stride
         idx = self._priority_indices(np.arange(n, dtype=np.intp), stride)
@@ -1062,11 +1074,15 @@ class ShotViewerWidget(QWidget):
         vis_data_w = min(data_w, vp_w) / dpp          # screen px the data fills, X
         vis_data_h = min(data_h, vp_h) / dpp          # screen px the data fills, Y
         data_screen_px = max(vis_data_w * vis_data_h, 1.0)
-        budget = min(int(data_screen_px * _MAX_SHOTS_PER_PX), _MAX_RENDERED)
+        if self._marker_mode == 'gaussian':
+            spp, min_b, max_r = _GAUSS_SHOTS_PER_PX, _GAUSS_MIN_BUDGET, _GAUSS_MAX_RENDERED
+        else:
+            spp, min_b, max_r = _DISC_SHOTS_PER_PX, _DISC_MIN_BUDGET, _DISC_MAX_RENDERED
+        budget = min(max(min_b, int(data_screen_px * spp)), max_r)
         stride = max(1.0, n_vis / budget)
-        # Quantise stride for cache key only \u2014 actual stride is continuous
+        # Quantise stride for cache key only — actual stride is continuous
         stride_quant = round(stride * 5) / 5      # 0.2 steps for cache key
-        print(f"[stride] n_vis={n_vis} stride={stride:.3f} budget={budget} data_px={data_screen_px:.0f} dpp={dpp:.2f}")
+        print(f"[stride] n_vis={n_vis} stride={stride:.3f} budget={budget} min_b={min_b} data_px={data_screen_px:.0f} dpp={dpp:.2f} mode={self._marker_mode}")
 
         # Build a cache key from viewport quantised bounds + stride + quantised dpp
         # Log-quantise dpp so the key changes ~every 5% zoom step
