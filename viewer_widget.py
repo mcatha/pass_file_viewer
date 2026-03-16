@@ -48,7 +48,7 @@ _STRIDE_EXPONENT = 0.4     # power curve: <1 ramps fast then flattens, >1 gentle
 # ── Mode-specific budget parameters ──
 # Gaussian (additive): brightness comes from accumulation, so we need
 # high shot density even when data covers few screen pixels.
-_GAUSS_SHOTS_PER_PX = 6.0       # per-pixel density target
+_GAUSS_SHOTS_PER_PX = 20.0      # per-pixel density target
 _GAUSS_MIN_BUDGET   = 200_000   # floor: never decimate below this
 _GAUSS_MAX_RENDERED = 2_097_152  # hard cap (2^21)
 # Disc (alpha blend): each shot is fully opaque, so fewer are fine.
