@@ -23,9 +23,18 @@ from PyQt6.QtWidgets import (
     QSlider,
 )
 
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtCore import QUrl
+
+import sys as _sys
+
 from pass_parser import parse_pass_file, PassData
 from viewer_widget import ShotViewerWidget
 from selection_pane import SelectionPane
+
+# Support both normal execution and PyInstaller bundle
+_BASE_DIR = Path(getattr(_sys, '_MEIPASS', Path(__file__).resolve().parent))
+_MP3_PATH = str(_BASE_DIR / "high_skies-the_shape_of_things_to_come.mp3")
 
 
 class _ParseWorker(QObject):
@@ -136,7 +145,6 @@ class MainWindow(QMainWindow):
 
         # ── FWHM scale slider ──────────────────────────────────────
         # Logarithmic slider: value ∈ [-200, 200] → scale = 10^(v/100)
-        # FWHM nm/µs = 10 * scale  → range [0.1, 1000] nm/µs
         fwhm_container = QWidget()
         fwhm_layout = QHBoxLayout(fwhm_container)
         fwhm_layout.setContentsMargins(8, 2, 8, 2)
@@ -146,9 +154,9 @@ class MainWindow(QMainWindow):
         self._fwhm_value_label.setFixedWidth(100)
         self._fwhm_value_label.setStyleSheet("color: #ccc;")
         self._fwhm_slider = QSlider(Qt.Orientation.Horizontal)
-        self._fwhm_slider.setMinimum(-200)   # 10^(-2) = 0.01× → 0.1 nm/µs
-        self._fwhm_slider.setMaximum(200)    # 10^(+2) = 100×  → 1000 nm/µs
-        self._fwhm_slider.setValue(78)       # 10^0.78 ≈ 6.0×  → 60 nm/µs
+        self._fwhm_slider.setMinimum(-200)
+        self._fwhm_slider.setMaximum(200)
+        self._fwhm_slider.setValue(78)        # 10^0.78 ≈ 6.0× → 60 nm/µs
         self._fwhm_slider.setFixedWidth(160)
         self._fwhm_slider.valueChanged.connect(self._on_fwhm_slider)
         fwhm_layout.addWidget(fwhm_label)
@@ -160,12 +168,235 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
 
-        # ── Marker mode toggle ──────────────────────────────────────
-        self._disc_mode_act = QAction("&Disc Markers (hard edge + overlay)", self)
+        # ── Marker mode select ───────────────────────────────────────
+        mode_menu = view_menu.addMenu("Marker &Mode")
+        self._mode_group = QActionGroup(self)
+        self._mode_group.setExclusive(True)
+
+        self._disc_mode_act = QAction("Disc", self)
         self._disc_mode_act.setCheckable(True)
-        self._disc_mode_act.setChecked(False)
-        self._disc_mode_act.toggled.connect(self._on_marker_mode_toggle)
-        view_menu.addAction(self._disc_mode_act)
+        self._disc_mode_act.setChecked(True)
+        self._mode_group.addAction(self._disc_mode_act)
+        mode_menu.addAction(self._disc_mode_act)
+
+        self._gauss_mode_act = QAction("Gaussian", self)
+        self._gauss_mode_act.setCheckable(True)
+        self._gauss_mode_act.setChecked(False)
+        self._mode_group.addAction(self._gauss_mode_act)
+        mode_menu.addAction(self._gauss_mode_act)
+
+        self._mode_group.triggered.connect(self._on_marker_mode_select)
+
+        # ── Disc Alpha Controls submenu ───────────────────────────
+        self._disc_alpha_menu = view_menu.addMenu("&Disc Alpha Controls")
+
+        # Overlap white slider (log): base additive white alpha
+        # value ∈ [-300, 0] → 10^(v/100) ∈ [0.001, 1.0]
+        ow_container = QWidget()
+        ow_layout = QHBoxLayout(ow_container)
+        ow_layout.setContentsMargins(8, 2, 8, 2)
+        ow_label = QLabel("Overlap:")
+        ow_label.setStyleSheet("color: #ccc;")
+        self._ow_value_label = QLabel("0.050")
+        self._ow_value_label.setFixedWidth(60)
+        self._ow_value_label.setStyleSheet("color: #ccc;")
+        self._ow_slider = QSlider(Qt.Orientation.Horizontal)
+        self._ow_slider.setMinimum(-300)
+        self._ow_slider.setMaximum(0)
+        self._ow_slider.setValue(-130)        # 10^-1.30 ≈ 0.05
+        self._ow_slider.setFixedWidth(160)
+        self._ow_slider.valueChanged.connect(self._on_ow_slider)
+        ow_layout.addWidget(ow_label)
+        ow_layout.addWidget(self._ow_slider)
+        ow_layout.addWidget(self._ow_value_label)
+        ow_action = QWidgetAction(self)
+        ow_action.setDefaultWidget(ow_container)
+        self._disc_alpha_menu.addAction(ow_action)
+
+        # dpp_low slider (log): disc alpha = 1 below this DPP
+        # value ∈ [-200, 600] → 10^(v/100) ∈ [0.01, 1000000]
+        disc_lo_container = QWidget()
+        disc_lo_layout = QHBoxLayout(disc_lo_container)
+        disc_lo_layout.setContentsMargins(8, 2, 8, 2)
+        disc_lo_label = QLabel("dpp lo:")
+        disc_lo_label.setStyleSheet("color: #ccc;")
+        self._disc_lo_value_label = QLabel("0.01")
+        self._disc_lo_value_label.setFixedWidth(60)
+        self._disc_lo_value_label.setStyleSheet("color: #ccc;")
+        self._disc_lo_slider = QSlider(Qt.Orientation.Horizontal)
+        self._disc_lo_slider.setMinimum(-200)
+        self._disc_lo_slider.setMaximum(600)
+        self._disc_lo_slider.setValue(-200)       # 10^-2.00 = 0.01
+        self._disc_lo_slider.setFixedWidth(160)
+        self._disc_lo_slider.valueChanged.connect(self._on_disc_lo_slider)
+        disc_lo_layout.addWidget(disc_lo_label)
+        disc_lo_layout.addWidget(self._disc_lo_slider)
+        disc_lo_layout.addWidget(self._disc_lo_value_label)
+        disc_lo_action = QWidgetAction(self)
+        disc_lo_action.setDefaultWidget(disc_lo_container)
+        self._disc_alpha_menu.addAction(disc_lo_action)
+
+        # dpp_high slider (log): disc alpha = 0 above this DPP
+        # value ∈ [-200, 600] → 10^(v/100) ∈ [0.01, 1000000]
+        disc_hi_container = QWidget()
+        disc_hi_layout = QHBoxLayout(disc_hi_container)
+        disc_hi_layout.setContentsMargins(8, 2, 8, 2)
+        disc_hi_label = QLabel("dpp hi:")
+        disc_hi_label.setStyleSheet("color: #ccc;")
+        self._disc_hi_value_label = QLabel("1e+10")
+        self._disc_hi_value_label.setFixedWidth(60)
+        self._disc_hi_value_label.setStyleSheet("color: #ccc;")
+        self._disc_hi_slider = QSlider(Qt.Orientation.Horizontal)
+        self._disc_hi_slider.setMinimum(-200)
+        self._disc_hi_slider.setMaximum(1000)
+        self._disc_hi_slider.setValue(1000)       # 10^10.00 = 1e10
+        self._disc_hi_slider.setFixedWidth(160)
+        self._disc_hi_slider.valueChanged.connect(self._on_disc_hi_slider)
+        disc_hi_layout.addWidget(disc_hi_label)
+        disc_hi_layout.addWidget(self._disc_hi_slider)
+        disc_hi_layout.addWidget(self._disc_hi_value_label)
+        disc_hi_action = QWidgetAction(self)
+        disc_hi_action.setDefaultWidget(disc_hi_container)
+        self._disc_alpha_menu.addAction(disc_hi_action)
+
+        # dpp_mid slider (log): intermediate DPP point
+        # value ∈ [-200, 1000] → 10^(v/100) ∈ [0.01, 10000000000]
+        disc_mid_container = QWidget()
+        disc_mid_layout = QHBoxLayout(disc_mid_container)
+        disc_mid_layout.setContentsMargins(8, 2, 8, 2)
+        disc_mid_label = QLabel("dpp mid:")
+        disc_mid_label.setStyleSheet("color: #ccc;")
+        self._disc_mid_value_label = QLabel("5000")
+        self._disc_mid_value_label.setFixedWidth(60)
+        self._disc_mid_value_label.setStyleSheet("color: #ccc;")
+        self._disc_mid_slider = QSlider(Qt.Orientation.Horizontal)
+        self._disc_mid_slider.setMinimum(-200)
+        self._disc_mid_slider.setMaximum(1000)
+        self._disc_mid_slider.setValue(370)       # 10^3.70 ≈ 5000
+        self._disc_mid_slider.setFixedWidth(160)
+        self._disc_mid_slider.valueChanged.connect(self._on_disc_mid_slider)
+        disc_mid_layout.addWidget(disc_mid_label)
+        disc_mid_layout.addWidget(self._disc_mid_slider)
+        disc_mid_layout.addWidget(self._disc_mid_value_label)
+        disc_mid_action = QWidgetAction(self)
+        disc_mid_action.setDefaultWidget(disc_mid_container)
+        self._disc_alpha_menu.addAction(disc_mid_action)
+
+        # f_mid slider (linear): alpha value at dpp_mid
+        # value ∈ [0, 100] → 0.00 .. 1.00
+        fmid_container = QWidget()
+        fmid_layout = QHBoxLayout(fmid_container)
+        fmid_layout.setContentsMargins(8, 2, 8, 2)
+        fmid_label = QLabel("α mid:")
+        fmid_label.setStyleSheet("color: #ccc;")
+        self._fmid_value_label = QLabel("0.20")
+        self._fmid_value_label.setFixedWidth(60)
+        self._fmid_value_label.setStyleSheet("color: #ccc;")
+        self._fmid_slider = QSlider(Qt.Orientation.Horizontal)
+        self._fmid_slider.setMinimum(0)
+        self._fmid_slider.setMaximum(100)
+        self._fmid_slider.setValue(20)            # 0.20
+        self._fmid_slider.setFixedWidth(160)
+        self._fmid_slider.valueChanged.connect(self._on_fmid_slider)
+        fmid_layout.addWidget(fmid_label)
+        fmid_layout.addWidget(self._fmid_slider)
+        fmid_layout.addWidget(self._fmid_value_label)
+        fmid_action = QWidgetAction(self)
+        fmid_action.setDefaultWidget(fmid_container)
+        self._disc_alpha_menu.addAction(fmid_action)
+
+        # Inflate slider (linear): disc stride inflation amplitude
+        # value ∈ [0, 2000] → 0.00 .. 20.00 in steps of 0.01
+        infl_container = QWidget()
+        infl_layout = QHBoxLayout(infl_container)
+        infl_layout.setContentsMargins(8, 2, 8, 2)
+        infl_label = QLabel("Inflate:")
+        infl_label.setStyleSheet("color: #ccc;")
+        self._infl_value_label = QLabel("0.50")
+        self._infl_value_label.setFixedWidth(60)
+        self._infl_value_label.setStyleSheet("color: #ccc;")
+        self._infl_slider = QSlider(Qt.Orientation.Horizontal)
+        self._infl_slider.setMinimum(0)
+        self._infl_slider.setMaximum(2000)     # 0.00 .. 20.00
+        self._infl_slider.setValue(50)          # 0.50
+        self._infl_slider.setFixedWidth(160)
+        self._infl_slider.valueChanged.connect(self._on_infl_slider)
+        infl_layout.addWidget(infl_label)
+        infl_layout.addWidget(self._infl_slider)
+        infl_layout.addWidget(self._infl_value_label)
+        infl_action = QWidgetAction(self)
+        infl_action.setDefaultWidget(infl_container)
+        self._disc_alpha_menu.addAction(infl_action)
+
+        # Edge softness slider (linear): vispy antialias width in pixels
+        aa_container = QWidget()
+        aa_layout = QHBoxLayout(aa_container)
+        aa_layout.setContentsMargins(8, 2, 8, 2)
+        aa_label = QLabel("Edge:")
+        aa_label.setStyleSheet("color: #ccc;")
+        self._aa_value_label = QLabel("2.0")
+        self._aa_value_label.setFixedWidth(60)
+        self._aa_value_label.setStyleSheet("color: #ccc;")
+        self._aa_slider = QSlider(Qt.Orientation.Horizontal)
+        self._aa_slider.setMinimum(0)
+        self._aa_slider.setMaximum(200)       # 0..20.0 in steps of 0.1
+        self._aa_slider.setValue(20)          # 2.0
+        self._aa_slider.setFixedWidth(160)
+        self._aa_slider.valueChanged.connect(self._on_aa_slider)
+        aa_layout.addWidget(aa_label)
+        aa_layout.addWidget(self._aa_slider)
+        aa_layout.addWidget(self._aa_value_label)
+        aa_action = QWidgetAction(self)
+        aa_action.setDefaultWidget(aa_container)
+        self._disc_alpha_menu.addAction(aa_action)
+
+        # ── Gaussian Alpha Controls submenu ─────────────────────────
+        self._gauss_alpha_menu = view_menu.addMenu("&Gaussian Alpha Controls")
+        self._gauss_alpha_menu.setEnabled(False)
+
+        # d_ref slider (log): sigmoid midpoint
+        dref_container = QWidget()
+        dref_layout = QHBoxLayout(dref_container)
+        dref_layout.setContentsMargins(8, 2, 8, 2)
+        dref_label = QLabel("d_ref:")
+        dref_label.setStyleSheet("color: #ccc;")
+        self._dref_value_label = QLabel("16.5")
+        self._dref_value_label.setFixedWidth(60)
+        self._dref_value_label.setStyleSheet("color: #ccc;")
+        self._dref_slider = QSlider(Qt.Orientation.Horizontal)
+        self._dref_slider.setMinimum(-100)
+        self._dref_slider.setMaximum(300)
+        self._dref_slider.setValue(122)       # 10^1.22 ≈ 16.5
+        self._dref_slider.setFixedWidth(160)
+        self._dref_slider.valueChanged.connect(self._on_dref_slider)
+        dref_layout.addWidget(dref_label)
+        dref_layout.addWidget(self._dref_slider)
+        dref_layout.addWidget(self._dref_value_label)
+        dref_action = QWidgetAction(self)
+        dref_action.setDefaultWidget(dref_container)
+        self._gauss_alpha_menu.addAction(dref_action)
+
+        # α max slider (log)
+        amax_container = QWidget()
+        amax_layout = QHBoxLayout(amax_container)
+        amax_layout.setContentsMargins(8, 2, 8, 2)
+        amax_label = QLabel("\u03b1 max:")
+        amax_label.setStyleSheet("color: #ccc;")
+        self._amax_value_label = QLabel("0.330")
+        self._amax_value_label.setFixedWidth(60)
+        self._amax_value_label.setStyleSheet("color: #ccc;")
+        self._amax_slider = QSlider(Qt.Orientation.Horizontal)
+        self._amax_slider.setMinimum(-300)
+        self._amax_slider.setMaximum(0)
+        self._amax_slider.setValue(-48)       # 10^-0.48 ≈ 0.33
+        self._amax_slider.setFixedWidth(160)
+        self._amax_slider.valueChanged.connect(self._on_amax_slider)
+        amax_layout.addWidget(amax_label)
+        amax_layout.addWidget(self._amax_slider)
+        amax_layout.addWidget(self._amax_value_label)
+        amax_action = QWidgetAction(self)
+        amax_action.setDefaultWidget(amax_container)
+        self._gauss_alpha_menu.addAction(amax_action)
 
         view_menu.addSeparator()
 
@@ -255,6 +486,36 @@ class MainWindow(QMainWindow):
 
             self._color_categories.append({"group": group})
 
+        # ── Volume menu (top-level) ─────────────────────────────────
+        volume_menu = menu_bar.addMenu("V&olume")
+
+        vol_widget = QWidget()
+        vol_layout = QHBoxLayout(vol_widget)
+        vol_layout.setContentsMargins(8, 2, 8, 2)
+        vol_label = QLabel("Vol:")
+        vol_layout.addWidget(vol_label)
+        self._vol_slider = QSlider(Qt.Orientation.Horizontal)
+        self._vol_slider.setRange(0, 100)
+        self._vol_slider.setValue(0)
+        self._vol_slider.setFixedWidth(140)
+        vol_layout.addWidget(self._vol_slider)
+        self._vol_value_label = QLabel("0")
+        self._vol_value_label.setFixedWidth(28)
+        vol_layout.addWidget(self._vol_value_label)
+        vol_action = QWidgetAction(self)
+        vol_action.setDefaultWidget(vol_widget)
+        volume_menu.addAction(vol_action)
+
+        # Set up media player
+        self._audio_output = QAudioOutput(self)
+        self._audio_output.setVolume(0.0)
+        self._media_player = QMediaPlayer(self)
+        self._media_player.setAudioOutput(self._audio_output)
+        self._media_player.setSource(QUrl.fromLocalFile(_MP3_PATH))
+        self._media_player.setLoops(QMediaPlayer.Loops.Infinite)
+
+        self._vol_slider.valueChanged.connect(self._on_vol_slider)
+
         # Help menu
         help_menu = menu_bar.addMenu("&Help")
 
@@ -268,18 +529,91 @@ class MainWindow(QMainWindow):
 
     # ── slots ───────────────────────────────────────────────────────
 
+    def _on_vol_slider(self, value: int) -> None:
+        """Volume slider 0–100.  0 = muted/stopped, >0 = play at that volume."""
+        self._vol_value_label.setText(str(value))
+        vol = value / 100.0
+        self._audio_output.setVolume(vol)
+        if value > 0:
+            if self._media_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+                self._media_player.play()
+        else:
+            self._media_player.pause()
+
     def _on_fwhm_slider(self, value: int) -> None:
-        """Logarithmic FWHM slider: value ∈ [-100, 100] → scale ∈ [0.1, 10]."""
+        """Logarithmic FWHM slider: value ∈ [-200, 200] → scale = 10^(v/100)."""
         import math
         scale = math.pow(10, value / 100.0)
-        # FWHM in nm/µs: base rate is 10 nm/µs
-        fwhm_nm_per_us = 0.01 * scale * 1000.0  # _NM_PER_NS_DWELL * scale * 1e3
+        fwhm_nm_per_us = 0.01 * scale * 1000.0
         self._fwhm_value_label.setText(f"{fwhm_nm_per_us:.2f} nm/\u00b5s")
         self._viewer.set_fwhm_scale(scale)
 
-    def _on_marker_mode_toggle(self, checked: bool) -> None:
+    def _on_dref_slider(self, value: int) -> None:
+        """d_ref: slider [-100, 300] → d_ref = 10^(v/100) ∈ [0.1, 1000]."""
+        import math
+        d_ref = math.pow(10, value / 100.0)
+        self._dref_value_label.setText(f"{d_ref:.1f}")
+        self._viewer.set_alpha_dref(d_ref)
+
+    def _on_amax_slider(self, value: int) -> None:
+        """α max: slider [-300, 0] → α_max = 10^(v/100) ∈ [0.001, 1.0]."""
+        import math
+        amax = math.pow(10, value / 100.0)
+        self._amax_value_label.setText(f"{amax:.3f}")
+        self._viewer.set_alpha_max(amax)
+
+    def _on_ow_slider(self, value: int) -> None:
+        """Disc overlap white: slider [-300, 0] → 10^(v/100) ∈ [0.001, 1.0]."""
+        import math
+        ow = math.pow(10, value / 100.0)
+        self._ow_value_label.setText(f"{ow:.3f}")
+        self._viewer.set_disc_overlap_white(ow)
+
+    def _on_disc_lo_slider(self, value: int) -> None:
+        """Disc dpp_low: slider [-200, 600] → 10^(v/100) ∈ [0.01, 1000000]."""
+        import math
+        v = math.pow(10, value / 100.0)
+        self._disc_lo_value_label.setText(f"{v:.2g}")
+        self._viewer.set_disc_dref(v)
+
+    def _on_disc_hi_slider(self, value: int) -> None:
+        """Disc dpp_high: slider [-200, 1000] → 10^(v/100)."""
+        import math
+        v = math.pow(10, value / 100.0)
+        self._disc_hi_value_label.setText(f"{v:.2g}")
+        self._viewer.set_disc_dpp_high(v)
+
+    def _on_disc_mid_slider(self, value: int) -> None:
+        """Disc dpp_mid: slider [-200, 1000] → 10^(v/100)."""
+        import math
+        v = math.pow(10, value / 100.0)
+        self._disc_mid_value_label.setText(f"{v:.2g}")
+        self._viewer.set_disc_dpp_mid(v)
+
+    def _on_fmid_slider(self, value: int) -> None:
+        """α mid: slider [0, 100] → 0.00 .. 1.00."""
+        fmid = value / 100.0
+        self._fmid_value_label.setText(f"{fmid:.2f}")
+        self._viewer.set_disc_f_mid(fmid)
+
+    def _on_infl_slider(self, value: int) -> None:
+        """Disc inflate: slider [0, 2000] → 0.00 .. 20.00."""
+        amp = value / 100.0
+        self._infl_value_label.setText(f"{amp:.2f}")
+        self._viewer.set_disc_inflate_amp(amp)
+
+    def _on_aa_slider(self, value: int) -> None:
+        """Disc edge softness: slider [0, 200] → 0.0 .. 20.0 px."""
+        aa = value / 10.0
+        self._aa_value_label.setText(f"{aa:.1f}")
+        self._viewer.set_disc_antialias(aa)
+
+    def _on_marker_mode_select(self, action: QAction) -> None:
         """Switch between Gaussian PSF and hard-disc marker rendering."""
-        self._viewer.set_marker_mode('disc' if checked else 'gaussian')
+        is_disc = (action is self._disc_mode_act)
+        self._viewer.set_marker_mode('disc' if is_disc else 'gaussian')
+        self._gauss_alpha_menu.setEnabled(not is_disc)
+        self._disc_alpha_menu.setEnabled(is_disc)
 
     def _on_open(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -330,8 +664,15 @@ class MainWindow(QMainWindow):
             self,
             "About Pass File Viewer",
             "<h3>Pass File Viewer</h3>"
-            "<p>GPU-accelerated visualiser for binary .pass shot files.</p>"
-            "<p>Uses vispy (OpenGL) for rendering millions of shots.</p>",
+            "<p><b>Version 1.2</b> &mdash; March 2026</p>"
+            "<p>GPU-accelerated visualiser for binary .pass shot files.<br>"
+            "Uses vispy (OpenGL) for rendering millions of shots.</p>"
+            "<p>Created by <b>Morgan Catha</b>, Senior Electrical Engineer,<br>"
+            "for <b>Multibeam Corporation</b>.</p>"
+            "<hr>"
+            "<p style='font-size:small;'>Music: <i>The Shape of Things to Come</i> "
+            "by <b>High Skies</b>, from the album <i>Sounds of Earth</i> (2010).<br>"
+            "<a href='http://highskies.bandcamp.com'>highskies.bandcamp.com</a></p>",
         )
 
     def _on_controls(self) -> None:
@@ -343,6 +684,9 @@ class MainWindow(QMainWindow):
             "<b>Left-drag</b> — Box selection<br>"
             "<b>Left-click</b> — Select / deselect single shot<br>"
             "<b>Shift + Left-drag</b> — Rotate (2D)<br>"
+            "<b>Shift + Left-click</b> — Place ruler start<br>"
+            "<b>Left-click</b> (while ruler active) — Lock ruler end<br>"
+            "<b>Right-click</b> — Clear ruler<br>"
             "<b>Hover</b> — Show shot info tooltip<br><br>"
             "<b>Ctrl+L</b> — Toggle shot connection lines<br>"
             "<b>Ctrl+R</b> — Reset view<br>"
@@ -398,6 +742,10 @@ class MainWindow(QMainWindow):
 
         self._viewer.load_data(data)
         self._selection_pane.set_data(data)
+
+        # Easter egg: dollar bill green for novus_ordo
+        if path.stem.lower() == "novus_ordo":
+            self._viewer.set_shot_color((0.33, 0.54, 0.18, 1.0))
 
         self.setWindowTitle(f"Pass File Viewer — {path.name}")
         self._update_status(data, path)

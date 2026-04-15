@@ -7,7 +7,23 @@ Usage:
 """
 
 import sys
+import os
 from pathlib import Path
+
+def _check_opengl() -> None:
+    """Switch to Qt's software OpenGL if the system has no usable GPU driver."""
+    if os.environ.get("QT_OPENGL"):
+        return  # user already chose
+    try:
+        import ctypes
+        gl = ctypes.windll.opengl32
+        # If we can't even load a basic GL function, driver is broken
+        if not gl.wglGetProcAddress:
+            raise OSError
+    except Exception:
+        os.environ["QT_OPENGL"] = "software"
+
+_check_opengl()
 
 # vispy must use PyQt6 backend before any other vispy import
 from vispy import app as vispy_app

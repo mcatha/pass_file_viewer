@@ -16,7 +16,10 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
 from scipy.spatial import cKDTree
 import vispy
-vispy.use(gl='gl+')         # enable GL3+ backend (instanced rendering)
+try:
+    vispy.use(gl='gl+')         # prefer GL3+ backend (instanced rendering)
+except Exception:
+    vispy.use(gl='gl2')         # fallback for machines without GL3+ support
 from vispy import scene
 from vispy.scene import visuals
 from gaussian_markers import GaussianMarkers
@@ -27,9 +30,11 @@ from pass_parser import PassData
 _NM_PER_NS_DWELL = 0.01
 _DISC_SIZE_SCALE = 0.667
 _SHOT_COLOR = np.array([0.30, 0.60, 1.00, 1.0])  # bright blue, fully opaque
-_ALPHA_NEAR = 1.00     # Gaussian per-shot alpha at max zoom-in (big markers, heavy overlap)
-_ALPHA_FAR  = 0.01     # Gaussian per-shot alpha at max zoom-out (tiny markers, need visibility)
-_DISC_OVERLAP_WHITE = 0.08  # disc-mode: additive white alpha per overlap
+_ALPHA_NEAR = 1.00     # (legacy, unused — α max replaces this)
+_ALPHA_FAR  = 0.005    # Gaussian per-shot alpha at max zoom-out (tiny markers, need visibility)
+_ALPHA_MAX  = 0.330    # Gaussian per-shot alpha cap at close zoom
+_DISC_OVERLAP_WHITE = 0.05  # disc-mode: additive white alpha per overlap
+
 _SELECTED_COLOR = np.array([1.0, 0.90, 0.0, 1.0])  # bright gold for selected shot
 _BOX_SELECTED_COLOR = np.array([0.3, 1.0, 0.5, 1.0])  # bright green for box-selected
 _LINE_COLOR = (1.0, 0.40, 0.25, 0.7)      # bright red-ish
@@ -56,8 +61,10 @@ _DISC_SHOTS_PER_PX  = 3.0
 _DISC_MIN_BUDGET    = 0          # no floor
 _DISC_MAX_RENDERED  = 2_097_152
 print(f"[INIT] gauss={_GAUSS_SHOTS_PER_PX}/px min={_GAUSS_MIN_BUDGET} cap={_GAUSS_MAX_RENDERED}  disc={_DISC_SHOTS_PER_PX}/px cap={_DISC_MAX_RENDERED}")
-_ALPHA_REF_DPP = 20.0   # nm/px at which Gaussian alpha reaches midpoint
-                         # between _ALPHA_NEAR and _ALPHA_FAR
+
+_ALPHA_DREF = 16.5      # sigmoid midpoint: DPP where alpha is halfway between far and max
+_ALPHA_P = 1.5          # sigmoid steepness (higher = sharper transition)
+_STRIDE_INFLATE_AMP = 0.50  # size *= 1 + amp*log10(stride)/(log10(stride)+0.2)
 
 
 class _RightPanCamera(scene.PanZoomCamera):
@@ -330,7 +337,6 @@ class ShotViewerWidget(QWidget):
                                                     method='instanced')
         self._disc_base_markers.set_gl_state(blend=True, depth_test=False,
                                               blend_func=('src_alpha', 'one_minus_src_alpha'))
-        self._disc_base_markers.visible = False
 
         self._disc_overlap_markers = visuals.Markers(parent=self._visual_root,
                                                        antialias=2,
@@ -338,11 +344,13 @@ class ShotViewerWidget(QWidget):
                                                        method='instanced')
         self._disc_overlap_markers.set_gl_state(blend=True, depth_test=False,
                                                  blend_func=('src_alpha', 'one'))
-        self._disc_overlap_markers.visible = False
+
+        # Gaussian markers hidden by default (disc mode is default)
+        self._gauss_markers.visible = False
 
         # Active layer aliases (set by _apply_marker_mode)
-        self._marker_mode: str = 'gaussian'   # 'gaussian' or 'disc'
-        self._markers = self._gauss_markers
+        self._marker_mode: str = 'disc'   # 'gaussian' or 'disc'
+        self._markers = self._disc_base_markers
         self._overlap_markers = self._disc_overlap_markers
 
         # Connection lines render ON TOP of markers
@@ -352,6 +360,13 @@ class ShotViewerWidget(QWidget):
         # Overlay lines for connections to/from selected shot
         self._sel_lines = visuals.Line(parent=self._visual_root, color=_SEL_LINE_COLOR, width=3)
         self._sel_lines.visible = False
+
+        # Ruler line (data-space, white)
+        self._ruler_line = visuals.Line(parent=self._visual_root, color=(1, 1, 1, 0.9), width=2)
+        self._ruler_line.visible = False
+        # Ruler tick marks (perpendicular hash marks)
+        self._ruler_ticks = visuals.Line(parent=self._visual_root, color=(1, 1, 1, 0.7), width=1)
+        self._ruler_ticks.visible = False
 
         # Overlay markers for box-selected shots — disc versions
         self._disc_box_sel_markers = visuals.Markers(parent=self._visual_root, antialias=5,
@@ -393,8 +408,8 @@ class ShotViewerWidget(QWidget):
         self._gauss_sel_marker.visible = False
 
         # Active selection aliases (set by _apply_marker_mode)
-        self._sel_marker = self._gauss_sel_marker
-        self._box_sel_markers = self._gauss_box_sel_markers
+        self._sel_marker = self._disc_sel_marker
+        self._box_sel_markers = self._disc_box_sel_markers
 
         # Origin crosshair and axis lines
         _AXIS_COLOR = (0.6, 0.6, 0.6, 0.8)
@@ -466,6 +481,20 @@ class ShotViewerWidget(QWidget):
         self._hover_tooltip.setVisible(False)
         self._hover_tooltip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
 
+        # Ruler distance label
+        self._ruler_label = QLabel(self._canvas.native)
+        self._ruler_label.setStyleSheet(
+            "background-color: rgba(30, 30, 30, 220);"
+            "color: #fff;"
+            "border: 1px solid #999;"
+            "border-radius: 3px;"
+            "padding: 2px 6px;"
+            "font-family: Consolas, monospace;"
+            "font-size: 12px;"
+        )
+        self._ruler_label.setVisible(False)
+        self._ruler_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
         # On-screen shot count (top-left corner)
         self._shot_count_label = QLabel(self._canvas.native)
         self._shot_count_label.setStyleSheet(
@@ -496,6 +525,18 @@ class ShotViewerWidget(QWidget):
         self._all_sizes: np.ndarray | float | None = None  # full sizes
         self._raw_dwells: np.ndarray | None = None  # raw dwell values (ns)
         self._fwhm_scale: float = 6.0   # multiplier on _NM_PER_NS_DWELL (default 60 nm/µs)
+        self._stride_inflate_amp: float = _STRIDE_INFLATE_AMP  # hardcoded
+        self._alpha_comp_power: float = 1.0  # hardcoded: alpha /= stride_scale
+        self._alpha_far: float = _ALPHA_FAR  # hardcoded floor
+        self._alpha_max: float = _ALPHA_MAX  # close-zoom alpha cap (user-adjustable)
+        self._alpha_dref: float = _ALPHA_DREF  # sigmoid midpoint DPP (user-adjustable)
+        self._alpha_p: float = _ALPHA_P  # sigmoid steepness (hardcoded)
+        self._disc_overlap_white: float = _DISC_OVERLAP_WHITE  # disc overlap alpha (user-adjustable)
+        self._disc_dpp_low: float = 0.01    # disc log-linear: f=1 below this DPP
+        self._disc_dpp_mid: float = 5000.0   # disc log-linear: intermediate DPP
+        self._disc_f_mid: float = 0.2        # disc log-linear: alpha at dpp_mid
+        self._disc_dpp_high: float = 1e10    # disc log-linear: f=0 above this DPP
+        self._disc_inflate_amp: float = _STRIDE_INFLATE_AMP  # disc stride inflation (user-adjustable)
         self._decim_stride: int = 1  # current display stride (1 = all points)
 
         # Throttled shot decimation rebuild on zoom/pan
@@ -516,6 +557,11 @@ class ShotViewerWidget(QWidget):
         self._rubber_dragging = False
         self._rubber_start_px: tuple[float, float] | None = None  # pixel coords
         self._rubber_start_data: np.ndarray | None = None          # data coords
+
+        # Ruler state
+        self._ruler_start: np.ndarray | None = None   # data coords (centroid-shifted)
+        self._ruler_end: np.ndarray | None = None     # data coords (centroid-shifted)
+        self._ruler_active: bool = False               # True while stretching to mouse
 
         # Mouse tracking for hover
         self._canvas.native.setMouseTracking(True)
@@ -723,20 +769,64 @@ class ShotViewerWidget(QWidget):
             return base_sz
 
     def _sel_size(self, base_sz):
-        """Return selection marker size: at least _MIN_SEL_PX screen-pixels."""
-        sz = self._display_size(base_sz)
+        """Return selection marker size: floor-clamped + inflated + min screen px."""
         dpp = self._get_data_per_px()
+        if dpp is not None and dpp > 0:
+            if self._marker_mode == 'gaussian':
+                min_size = dpp * 4.0
+            else:
+                min_size = dpp
+            if np.isscalar(base_sz):
+                sz = max(base_sz, min_size)
+            else:
+                sz = np.maximum(base_sz, min_size)
+        else:
+            sz = base_sz
+        # Apply same stride inflation as the data layer
+        stride = self._decim_stride
+        amp = self._disc_inflate_amp if self._marker_mode == 'disc' else self._stride_inflate_amp
+        if stride > 1 and amp > 0.0:
+            ls = _math.log10(stride)
+            stride_scale = 1.0 + amp * ls / (ls + 0.2)
+            if np.isscalar(sz):
+                sz = sz * stride_scale
+            else:
+                sz = sz * stride_scale
+        sz = self._display_size(sz) * 1.05
+        # Ensure at least _MIN_SEL_PX screen pixels
         if dpp is not None and dpp > 0:
             min_data = _MIN_SEL_PX * dpp
             if np.isscalar(sz):
-                return max(sz * 1.05, min_data)
+                return max(sz, min_data)
             else:
-                return np.maximum(sz * 1.05, min_data)
-        return sz * 1.05
+                return np.maximum(sz, min_data)
+        return sz
 
     def _box_sel_size(self, base_sz):
-        """Return box-selection marker size (subtle, no minimum floor)."""
-        return self._display_size(base_sz) * 1.05
+        """Return box-selection marker size with same floor clamp + inflation as data."""
+        dpp = self._get_data_per_px()
+        if dpp is not None and dpp > 0:
+            if self._marker_mode == 'gaussian':
+                min_size = dpp * 4.0
+            else:
+                min_size = dpp
+            if np.isscalar(base_sz):
+                sz = max(base_sz, min_size)
+            else:
+                sz = np.maximum(base_sz, min_size)
+        else:
+            sz = base_sz
+        # Apply same stride inflation as the data layer
+        stride = self._decim_stride
+        amp = self._disc_inflate_amp if self._marker_mode == 'disc' else self._stride_inflate_amp
+        if stride > 1 and amp > 0.0:
+            ls = _math.log10(stride)
+            stride_scale = 1.0 + amp * ls / (ls + 0.2)
+            if np.isscalar(sz):
+                sz = sz * stride_scale
+            else:
+                sz = sz * stride_scale
+        return self._display_size(sz) * 1.05
 
     def set_selected_color(self, rgba: tuple[float, float, float, float]) -> None:
         """Change single-click selection colour."""
@@ -803,7 +893,7 @@ class ShotViewerWidget(QWidget):
     def _recompute_base_color(self) -> None:
         """Set self._base_color based on marker mode and current shot color."""
         if self._marker_mode == 'disc':
-            rgb = np.clip(_SHOT_COLOR[:3] - _DISC_OVERLAP_WHITE, 0, 1)
+            rgb = np.clip(_SHOT_COLOR[:3] - self._disc_overlap_white, 0, 1)
             self._base_color = np.array([*rgb, 1.0], dtype=np.float32)
         else:
             self._base_color = np.array([*_SHOT_COLOR[:3], 1.0], dtype=np.float32)
@@ -905,6 +995,94 @@ class ShotViewerWidget(QWidget):
         self._update_decim_stride()
         self._canvas.update()
 
+    def set_stride_inflate_amp(self, amp: float) -> None:
+        """Set the stride inflation amplitude and re-render."""
+        self._stride_inflate_amp = amp
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_alpha_far(self, value: float) -> None:
+        """Set the far-zoom alpha floor and re-render."""
+        self._alpha_far = max(0.001, min(value, 1.0))
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_alpha_comp_power(self, power: float) -> None:
+        """Set the alpha compensation power and re-render."""
+        self._alpha_comp_power = power
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_alpha_dref(self, value: float) -> None:
+        """Set sigmoid midpoint DPP (d_ref) and re-render.
+
+        alpha = alpha_far + (alpha_max - alpha_far) / (1 + (dpp/d_ref)^p)
+        """
+        self._alpha_dref = max(0.1, value)
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_alpha_max(self, value: float) -> None:
+        """Set the close-zoom alpha cap and re-render."""
+        self._alpha_max = max(0.001, min(value, 1.0))
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_disc_overlap_white(self, value: float) -> None:
+        """Set the disc-mode base white overlay alpha and re-render."""
+        self._disc_overlap_white = max(0.001, min(value, 1.0))
+        self._recompute_base_color()
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_disc_dref(self, value: float) -> None:
+        """Set the disc-mode dpp_low (opaque threshold) and re-render."""
+        self._disc_dpp_low = max(0.01, value)
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_disc_dpp_high(self, value: float) -> None:
+        """Set the disc-mode dpp_high (transparent threshold) and re-render."""
+        self._disc_dpp_high = max(0.01, value)
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_disc_dpp_mid(self, value: float) -> None:
+        """Set the disc-mode dpp_mid (intermediate point DPP) and re-render."""
+        self._disc_dpp_mid = max(0.01, value)
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_disc_f_mid(self, value: float) -> None:
+        """Set the disc-mode f_mid (alpha at dpp_mid) and re-render."""
+        self._disc_f_mid = max(0.0, min(1.0, value))
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_disc_inflate_amp(self, amp: float) -> None:
+        """Set the disc-mode stride inflation amplitude and re-render."""
+        self._disc_inflate_amp = max(0.0, amp)
+        self._last_view_key = None
+        self._update_decim_stride()
+        self._canvas.update()
+
+    def set_disc_antialias(self, value: float) -> None:
+        """Set the disc edge softness (antialias width in pixels) and re-render."""
+        value = max(0.0, value)
+        self._disc_base_markers.antialias = value
+        self._disc_overlap_markers.antialias = value
+        self._canvas.update()
+
     # ── line decimation ─────────────────────────────────────────────
 
     def _get_data_per_px(self) -> float | None:
@@ -982,11 +1160,8 @@ class ShotViewerWidget(QWidget):
 
         # Ensure each marker is at least a few pixels wide in data units.
         # Gaussians need ~4px to show their smooth falloff; discs need 1px.
-        # In Gaussian mode with stride > 1, inflate the floor by √stride
-        # so each surviving shot just covers the gap left by removed neighbors.
-        # Shots already larger than the floor are unchanged.
         if self._marker_mode == 'gaussian':
-            min_size = dpp * 4.0 * _math.sqrt(max(stride, 1.0))
+            min_size = dpp * 4.0
         else:
             min_size = dpp
         if np.isscalar(dsizes):
@@ -994,13 +1169,48 @@ class ShotViewerWidget(QWidget):
         else:
             base_sizes = np.maximum(dsizes, min_size)
 
+        # Inflate AFTER floor clamp so the scaling is always visible.
+        # scale = 1 + A * log10(stride) / (log10(stride) + 0.2)
+        # Saturates near 1+A at high stride; exactly 1.0 at stride=1.
+        # Use mode-specific amplitude so disc and gaussian can be tuned independently.
         if self._marker_mode == 'gaussian':
-            # Quadratic alpha curve: overlap density grows as (size/dpp)²,
-            # so alpha must shrink quadratically at close zoom.
-            t = dpp**2 / (dpp**2 + _ALPHA_REF_DPP**2)  # 0 at close, →1 far
-            alpha = _ALPHA_NEAR + (_ALPHA_FAR - _ALPHA_NEAR) * t
+            amp = self._stride_inflate_amp
+        else:
+            amp = self._disc_inflate_amp
+        if stride > 1.0 and amp > 0.0:
+            ls = _math.log10(stride)
+            stride_scale = 1.0 + amp * ls / (ls + 0.2)
+            if np.isscalar(base_sizes):
+                base_sizes = base_sizes * stride_scale
+            else:
+                base_sizes = base_sizes * stride_scale
+
+        if self._marker_mode == 'gaussian':
+            # Alpha based on rendered size, not raw zoom.
+            # effective_dpp = rendered_size / 4  (the dpp at which that size
+            # would just hit the 4-px floor clamp).
+            # When floor-clamped: effective_dpp = dpp  (alpha tracks zoom)
+            # When natural size:  effective_dpp = size/4  (alpha freezes)
+            # ── Sigmoid alpha curve ──
+            # α = α_far + (α_max − α_far) / (1 + (dpp/d_ref)^p)
+            # Smooth S-curve: α_max when zoomed in, α_far when zoomed out,
+            # with d_ref controlling where the midpoint is.
+            if np.isscalar(dsizes):
+                natural_dpp = float(dsizes) / 4.0
+            else:
+                natural_dpp = float(np.median(dsizes)) / 4.0
+            effective_dpp = max(dpp, natural_dpp)
+
+            d_ref = self._alpha_dref
+            p = self._alpha_p
+            alpha = self._alpha_far + (self._alpha_max - self._alpha_far) / (1.0 + (effective_dpp / d_ref) ** p)
+            # Compensate for stride size inflation
+            if stride > 1.0:
+                ls = _math.log10(stride)
+                stride_scale_alpha = 1.0 + self._stride_inflate_amp * ls / (ls + 0.2)
+                alpha = max(self._alpha_far, alpha / (stride_scale_alpha ** self._alpha_comp_power))
             self._last_overlap_alpha = alpha
-            print(f"[gauss] dpp={dpp:.2f} t={t:.4f} alpha={alpha:.5f} stride={stride:.2f} size_scale={_math.sqrt(max(stride,1.0)):.2f}")
+            print(f"[gauss] dpp={dpp:.2f} eff_dpp={effective_dpp:.2f} alpha={alpha:.5f} stride={stride:.2f} d_ref={d_ref:.1f} p={p:.1f}")
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,
@@ -1008,19 +1218,52 @@ class ShotViewerWidget(QWidget):
                 edge_width=0,
             )
         else:
-            # Disc mode: base (alpha blend) + overlap (additive white)
+            # Disc mode: two regimes
+            # 1) Natural size (zoomed in, dpp < shot_size): base α=1,
+            #    overlay α=ow.  Non-overlapping = shot_color, overlapping
+            #    = brighter by ow per extra disc.
+            # 2) Floor-clamped (zoomed out, dpp ≥ shot_size): base α < 1
+            #    via sigmoid, overlay α = ow * same factor.  Density shows
+            #    through accumulation; single-disc cancellation still holds
+            #    because both layers scale by the same factor f:
+            #      (shot_color - ow)*f + bg*(1-f) + ow*f = shot_color*f + bg*(1-f)
             disc_sizes = base_sizes * _DISC_SIZE_SCALE if not np.isscalar(base_sizes) else base_sizes * _DISC_SIZE_SCALE
-            disc_true_sizes = dsizes * _DISC_SIZE_SCALE if not np.isscalar(dsizes) else dsizes * _DISC_SIZE_SCALE
+
+            ow = self._disc_overlap_white
+
+            # Piecewise log-linear ramp with intermediate point:
+            # f=1 when dpp ≤ lo, f=f_mid at dpp_mid, f=0 when dpp ≥ hi.
+            # Linear in log-space between each pair.
+            dpp_lo = self._disc_dpp_low
+            dpp_mid = self._disc_dpp_mid
+            dpp_hi = self._disc_dpp_high
+            f_mid = self._disc_f_mid
+            if dpp <= dpp_lo:
+                f = 1.0
+            elif dpp >= dpp_hi:
+                f = 0.0
+            elif dpp_mid <= dpp_lo or dpp_mid >= dpp_hi:
+                # mid out of range — fall back to simple lo→hi
+                f = 1.0 - (_math.log(dpp) - _math.log(dpp_lo)) / (_math.log(dpp_hi) - _math.log(dpp_lo))
+            elif dpp <= dpp_mid:
+                t = (_math.log(dpp) - _math.log(dpp_lo)) / (_math.log(dpp_mid) - _math.log(dpp_lo))
+                f = 1.0 + (f_mid - 1.0) * t
+            else:
+                t = (_math.log(dpp) - _math.log(dpp_mid)) / (_math.log(dpp_hi) - _math.log(dpp_mid))
+                f = f_mid * (1.0 - t)
+            print(f"[disc] dpp={dpp:.2f} lo={dpp_lo:.1f} mid={dpp_mid:.1f} hi={dpp_hi:.1f} f_mid={f_mid:.2f} f={f:.5f} ow={ow:.3f}")
+
+            self._last_overlap_alpha = ow * f
+
+            base_fc = np.array([*self._base_color[:3], f], dtype=np.float32)
             self._disc_base_markers.set_data(
                 dpos, size=disc_sizes,
-                face_color=self._base_color, edge_color=self._base_color,
+                face_color=base_fc, edge_color=base_fc,
                 edge_width=0,
             )
-            alpha = _DISC_OVERLAP_WHITE * _ALPHA_REF_DPP / (dpp + _ALPHA_REF_DPP)
-            self._last_overlap_alpha = alpha
-            overlap_color = np.array([1.0, 1.0, 1.0, alpha], dtype=np.float32)
+            overlap_color = np.array([1.0, 1.0, 1.0, ow * f], dtype=np.float32)
             self._disc_overlap_markers.set_data(
-                dpos, size=disc_true_sizes,
+                dpos, size=disc_sizes,
                 face_color=overlap_color, edge_color=overlap_color,
                 edge_width=0,
             )
@@ -1082,6 +1325,7 @@ class ShotViewerWidget(QWidget):
             spp, min_b, max_r = _DISC_SHOTS_PER_PX, _DISC_MIN_BUDGET, _DISC_MAX_RENDERED
         budget = min(max(min_b, int(data_screen_px * spp)), max_r)
         stride = max(1.0, n_vis / budget)
+        self._decim_stride = stride
         # Quantise stride for cache key only — actual stride is continuous
         stride_quant = round(stride * 5) / 5      # 0.2 steps for cache key
         print(f"[stride] n_vis={n_vis} stride={stride:.3f} budget={budget} min_b={min_b} data_px={data_screen_px:.0f} dpp={dpp:.2f} mode={self._marker_mode}")
@@ -1228,6 +1472,10 @@ class ShotViewerWidget(QWidget):
         if self._all_positions is not None:
             self._shot_decim_timer.start()
 
+        # Reposition ruler label
+        if self._ruler_start is not None:
+            self._update_ruler_visual()
+
         # Refresh selection marker sizes so they stay visible at any zoom
         if self._sel_marker.visible and self._selected_idx is not None:
             idx = self._selected_idx
@@ -1296,21 +1544,23 @@ class ShotViewerWidget(QWidget):
         ]
         self._arrow_overlay.update()
 
-        # Grow axis lines if the viewport now exceeds them.
-        # Only grows (never shrinks) to avoid set_data thrash.
-        vp_diag = _math.hypot(float(self._camera.rect.width),
-                              float(self._camera.rect.height))
-        need = vp_diag * 2.0
-        if need > self._axis_half_len:
-            self._axis_half_len = need
+        # Clip axis lines to viewport bounds + margin so GPU never
+        # handles huge coordinates (prevents float32 rasterizer jitter).
+        bounds = self._get_viewport_bounds()
+        if bounds is not None:
+            xmin, xmax, ymin, ymax = bounds
+            # 100% margin keeps lines off-screen but coordinates small
+            mx = (xmax - xmin)
+            my = (ymax - ymin)
+            xmin -= mx;  xmax += mx
+            ymin -= my;  ymax += my
             orig_c = -self._origin.astype(np.float64)
-            hl = self._axis_half_len
             self._x_axis.set_data(
-                np.array([[orig_c[0] - hl, orig_c[1]],
-                           [orig_c[0] + hl, orig_c[1]]], dtype=np.float64))
+                np.array([[xmin, orig_c[1]],
+                           [xmax, orig_c[1]]], dtype=np.float64))
             self._y_axis.set_data(
-                np.array([[orig_c[0], orig_c[1] - hl],
-                           [orig_c[0], orig_c[1] + hl]], dtype=np.float64))
+                np.array([[orig_c[0], ymin],
+                           [orig_c[0], ymax]], dtype=np.float64))
 
     def _data_to_canvas(self, data_xy: np.ndarray) -> np.ndarray | None:
         """Map a data (x, y) point to canvas pixel coordinates via node_transform."""
@@ -1365,6 +1615,11 @@ class ShotViewerWidget(QWidget):
         except Exception:
             pass
 
+        # Update ruler endpoint while stretching
+        if self._ruler_active and self._ruler_start is not None:
+            self._ruler_end = np.array([data_x, data_y], dtype=np.float32)
+            self._update_ruler_visual()
+
         if self._kdtree is None or self._data is None:
             return
 
@@ -1373,6 +1628,48 @@ class ShotViewerWidget(QWidget):
         self._pending_hover_px = (int(event.pos[0]), int(event.pos[1]))
         if not self._hover_timer.isActive():
             self._hover_timer.start()
+
+    def _hit_test(self, scene_pos: np.ndarray, min_radius_data: float) -> int | None:
+        """Return the index of the shot under *scene_pos*, or None.
+
+        Uses ``query_ball_point`` with a radius equal to the largest
+        rendered shot so that every candidate is considered regardless
+        of how many smaller shots lie between the click and a large
+        shot's centre.  Among all hits the nearest centre wins.
+        """
+        if self._kdtree is None:
+            return None
+
+        disc_mode = self._marker_mode == 'disc'
+        scale = _DISC_SIZE_SCALE if disc_mode else 1.0
+
+        # Determine the maximum possible hit radius (half the largest marker)
+        if self._uniform_size is not None:
+            max_r = self._uniform_size * scale / 2.0
+        else:
+            max_r = float(np.max(self._sizes)) * scale / 2.0
+        search_r = max(max_r, min_radius_data)
+
+        idxs = self._kdtree.query_ball_point(scene_pos, r=search_r)
+        if not idxs:
+            return None
+
+        # Compute distances for all candidates
+        centres = self._kdtree.data[idxs]          # (N, 2)
+        dists = np.linalg.norm(centres - scene_pos, axis=1)
+
+        # Sort by distance (nearest centre first)
+        order = np.argsort(dists)
+
+        for o in order:
+            i = idxs[o]
+            d = dists[o]
+            sz = self._uniform_size if self._uniform_size is not None else self._sizes[i]
+            r = sz * scale / 2.0
+            if d <= max(r, min_radius_data):
+                return int(i)
+
+        return None
 
     def _do_hover_query(self) -> None:
         """Perform the actual KD-tree hover lookup (throttled)."""
@@ -1384,15 +1681,6 @@ class ShotViewerWidget(QWidget):
 
         scene_pos = np.array([data_x, data_y], dtype=np.float32)
 
-        # Query nearest shot
-        dist, idx = self._kdtree.query(scene_pos)
-
-        # Sizes are already in data units (nm); compute hit radius directly
-        sz = self._uniform_size if self._uniform_size is not None else self._sizes[idx]
-        if self._marker_mode == 'disc':
-            marker_radius_data = sz * _DISC_SIZE_SCALE / 2.0
-        else:
-            marker_radius_data = sz / 2.0
         # Minimum hit radius: 5 pixels converted to data units
         try:
             tr_h = self._canvas.scene.node_transform(self._visual_root)
@@ -1400,8 +1688,11 @@ class ShotViewerWidget(QWidget):
             p1_h = tr_h.map([1, 0, 0, 1])
             min_radius_data = 5.0 * abs(p1_h[0] - p0_h[0])
         except Exception:
-            min_radius_data = marker_radius_data
-        if dist <= max(marker_radius_data, min_radius_data):
+            min_radius_data = 0.0
+
+        idx = self._hit_test(scene_pos, min_radius_data)
+
+        if idx is not None:
             # Don't show hover tooltip for the already-selected shot
             if idx == self._selected_idx:
                 self._hover_tooltip.setVisible(False)
@@ -1424,10 +1715,15 @@ class ShotViewerWidget(QWidget):
 
     def _on_mouse_press(self, event) -> None:
         """Handle click-to-select, rubber-band start, and Shift+drag rotation."""
+        # Track right-click start position for ruler clear detection
+        if event.button == 2:
+            self._right_click_start_px = (float(event.pos[0]), float(event.pos[1]))
+
         # Shift + left-click → start rotation
         if event.button == 1 and Qt.KeyboardModifier.ShiftModifier in self._get_modifiers(event):
             self._rotating = True
             self._rotate_start_x = event.pos[0]
+            self._rotate_start_pos = (float(event.pos[0]), float(event.pos[1]))
             self._rotate_start_angle = self._rotation_deg
             # Save current transform so we can compose delta on top
             self._rotate_base_matrix = self._visual_root.transform.matrix.copy()
@@ -1455,8 +1751,30 @@ class ShotViewerWidget(QWidget):
             event.handled = True
 
     def _on_mouse_release(self, event) -> None:
+        # Right-click (not drag) → clear ruler
+        if event.button == 2 and self._ruler_start is not None:
+            sp = getattr(self, '_right_click_start_px', None)
+            if sp is not None:
+                ex, ey = float(event.pos[0]), float(event.pos[1])
+                if ((ex - sp[0]) ** 2 + (ey - sp[1]) ** 2) ** 0.5 < 5:
+                    self._clear_ruler()
+
         if self._rotating:
             self._rotating = False
+            # Tiny Shift+drag → Shift+click → start ruler
+            sp = getattr(self, '_rotate_start_pos', None)
+            if sp is not None:
+                ex, ey = float(event.pos[0]), float(event.pos[1])
+                if ((ex - sp[0]) ** 2 + (ey - sp[1]) ** 2) ** 0.5 < 5:
+                    try:
+                        tr = self._canvas.scene.node_transform(self._visual_root)
+                        pos3 = tr.map(list(event.pos) + [0, 1])
+                        self._ruler_start = np.array([pos3[0], pos3[1]], dtype=np.float32)
+                        self._ruler_end = None
+                        self._ruler_active = True
+                        self._update_ruler_visual()
+                    except Exception:
+                        pass
             return
 
         if self._rubber_dragging:
@@ -1472,6 +1790,17 @@ class ShotViewerWidget(QWidget):
             drag_dist = ((ex - sx) ** 2 + (ey - sy) ** 2) ** 0.5
 
             if drag_dist < 5:
+                # If ruler is stretching, lock its endpoint
+                if self._ruler_active:
+                    try:
+                        tr = self._canvas.scene.node_transform(self._visual_root)
+                        pos3 = tr.map(list(event.pos) + [0, 1])
+                        self._ruler_end = np.array([pos3[0], pos3[1]], dtype=np.float32)
+                        self._ruler_active = False
+                        self._update_ruler_visual()
+                    except Exception:
+                        pass
+                    return
                 # Tiny drag → treat as single click
                 self._handle_click_select(event)
                 return
@@ -1549,27 +1878,21 @@ class ShotViewerWidget(QWidget):
         except Exception:
             return
 
-        dist, idx = self._kdtree.query(scene_pos)
-
-        # Sizes are already in data units (nm); compute hit radius directly
-        sz = self._uniform_size if self._uniform_size is not None else self._sizes[idx]
-        if self._marker_mode == 'disc':
-            marker_radius_data = sz * _DISC_SIZE_SCALE / 2.0
-        else:
-            marker_radius_data = sz / 2.0
         # Minimum hit radius: 5 pixels converted to data units
         try:
             p0 = tr.map([0, 0, 0, 1])
             p1 = tr.map([1, 0, 0, 1])
             min_radius_data = 5.0 * abs(p1[0] - p0[0])
         except Exception:
-            min_radius_data = marker_radius_data
+            min_radius_data = 0.0
+
+        idx = self._hit_test(scene_pos, min_radius_data)
 
         # Deselect previous
         if self._selected_idx is not None:
             self._sel_marker.visible = False
 
-        if dist <= max(marker_radius_data, min_radius_data):
+        if idx is not None:
             if self._selected_idx == idx:
                 # Clicking the same shot again → deselect
                 self._selected_idx = None
@@ -1584,9 +1907,12 @@ class ShotViewerWidget(QWidget):
                 self._hover_tooltip.setVisible(False)
                 # Show selected shot as overlay on top
                 sel_sz = self._uniform_size if self._uniform_size is not None else self._sizes[idx:idx+1]
+                computed_sel = self._sel_size(sel_sz)
+                dpp = self._get_data_per_px()
+                print(f"[SEL] raw_sz={sel_sz} sel_sz={computed_sel} dpp={dpp} stride={self._decim_stride} mode={self._marker_mode}")
                 self._sel_marker.set_data(
                     self._positions[idx:idx+1],
-                    size=self._sel_size(sel_sz),
+                    size=computed_sel,
                     face_color=_SELECTED_COLOR,
                     edge_width=0,
                 )
@@ -1708,6 +2034,80 @@ class ShotViewerWidget(QWidget):
             self._visual_root.transform.matrix = inc.matrix @ base
         else:
             self._visual_root.transform = inc
+        self._canvas.update()
+
+    def _update_ruler_visual(self) -> None:
+        """Redraw the ruler line, tick marks, and reposition the distance label."""
+        if self._ruler_start is None:
+            self._ruler_line.visible = False
+            self._ruler_ticks.visible = False
+            self._ruler_label.setVisible(False)
+            return
+        end = self._ruler_end if self._ruler_end is not None else self._ruler_start
+        pts = np.array([self._ruler_start, end], dtype=np.float32)
+        self._ruler_line.set_data(pos=pts, color=(1, 1, 1, 0.9))
+        self._ruler_line.visible = True
+        dx = float(end[0] - self._ruler_start[0])
+        dy = float(end[1] - self._ruler_start[1])
+        dist = _math.hypot(dx, dy)
+
+        # Generate tick marks along the ruler
+        if dist > 1e-9:
+            # Choose a nice tick interval
+            raw = dist / 10.0
+            mag = 10.0 ** _math.floor(_math.log10(raw)) if raw > 0 else 1.0
+            nice = mag
+            for candidate in [1, 2, 5, 10]:
+                if candidate * mag >= raw:
+                    nice = candidate * mag
+                    break
+            # Perpendicular unit vector
+            inv = 1.0 / dist
+            ux, uy = dx * inv, dy * inv  # along ruler
+            px, py = -uy, ux             # perpendicular
+            # Tick half-length: 6 pixels in data units
+            dpp = self._get_data_per_px()
+            half = 6.0 * dpp
+            tick_pts = []
+            t = nice
+            while t < dist - nice * 0.01:
+                cx = self._ruler_start[0] + ux * t
+                cy = self._ruler_start[1] + uy * t
+                tick_pts.append([cx - px * half, cy - py * half])
+                tick_pts.append([cx + px * half, cy + py * half])
+                t += nice
+            if tick_pts:
+                self._ruler_ticks.set_data(
+                    pos=np.array(tick_pts, dtype=np.float32),
+                    connect='segments', color=(1, 1, 1, 0.7))
+                self._ruler_ticks.visible = True
+            else:
+                self._ruler_ticks.visible = False
+        else:
+            self._ruler_ticks.visible = False
+
+        if dist >= 1e6:
+            txt = f"{dist / 1e6:,.3f} mm"
+        elif dist >= 1e3:
+            txt = f"{dist / 1e3:,.3f} \u00b5m"
+        else:
+            txt = f"{dist:,.1f} nm"
+        self._ruler_label.setText(txt)
+        self._ruler_label.adjustSize()
+        mid = (self._ruler_start + end) / 2.0
+        screen = self._data_to_canvas(mid)
+        if screen is not None:
+            self._ruler_label.move(int(screen[0]) + 10, int(screen[1]) - 20)
+        self._ruler_label.setVisible(True)
+
+    def _clear_ruler(self) -> None:
+        """Remove the ruler."""
+        self._ruler_start = None
+        self._ruler_end = None
+        self._ruler_active = False
+        self._ruler_line.visible = False
+        self._ruler_ticks.visible = False
+        self._ruler_label.setVisible(False)
         self._canvas.update()
 
     @staticmethod

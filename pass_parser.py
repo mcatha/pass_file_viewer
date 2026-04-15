@@ -1,11 +1,16 @@
 """
-Binary parser for .pass files (v3 and v4, auto-detected).
+Binary parser for .pass files and their companion .pass.meta metadata files.
 
 Pass file format:
-  - Header: 64 bytes (v3) or 78 bytes (v4), little-endian, packed
-  - Stream of 8-byte records (Shot or Shape union)
-    - Shot (mID == 0): 2-bit ID, 14-bit dwell, 16-bit X, 32-bit Y
-    - Shape (mID != 0): 2-bit ID, 30-bit spare, 32-bit parameter (signed)
+  - .pass files contain ONLY 8-byte shot/shape records (no header).
+  - Metadata lives in a companion .pass.meta file (same name + .meta).
+  - .pass.meta follows the MEBL2 packed struct format (little-endian).
+  - Legacy synthetic files may embed a header directly in the .pass file;
+    these are detected by the magic number 0xb3d11982 at byte 0.
+
+Record format (8 bytes each, Shot or Shape union):
+    Shot  (mID == 0): 2-bit ID, 14-bit dwell, 16-bit X, 32-bit Y
+    Shape (mID != 0): 2-bit ID, 30-bit spare, 32-bit parameter (signed)
 
 Uses numpy for vectorised bitfield extraction — handles millions of records
 in seconds.
@@ -18,12 +23,17 @@ from pathlib import Path
 
 import numpy as np
 
-# ── header layouts ──────────────────────────────────────────────────
-# v3: 64 bytes   v4: 78 bytes (adds overlap, baseDwellTime, debug, centerShotPresent)
+# ── magic number ────────────────────────────────────────────────────
+_STRIPE_SYMBOL = 0xB3D11982
+
+# ── meta / embedded header layouts (little-endian, packed) ──────────
+# v3: 64 bytes  v4: 78 bytes  v2.1.1: 88 bytes (appends compression fields)
 _V3_FMT = "<IHHiiIIdHHdiQQ"
 _V4_FMT = "<IHHiiIIdHHdiQQQI??"
-_V3_SIZE = struct.calcsize(_V3_FMT)   # 64
-_V4_SIZE = struct.calcsize(_V4_FMT)   # 78
+_V211_FMT = "<IHHiiIIdHHdiQQQI????ii"
+_V3_SIZE = struct.calcsize(_V3_FMT)     # 64
+_V4_SIZE = struct.calcsize(_V4_FMT)     # 78
+_V211_SIZE = struct.calcsize(_V211_FMT)  # 88
 
 _V3_FIELDS = (
     "stripeSymbol",
@@ -49,6 +59,13 @@ _V4_FIELDS = _V3_FIELDS + (
     "centerShotPresent",
 )
 
+_V211_FIELDS = _V4_FIELDS + (
+    "compression",
+    "compression2Order",
+    "shotsPerBlock",
+    "blocksPer2Order",
+)
+
 
 @dataclass
 class PassHeader:
@@ -70,7 +87,11 @@ class PassHeader:
     baseDwellTime: int = 0
     debug: bool = False
     centerShotPresent: bool = False
-    version: int = 3  # detected format version
+    compression: bool = False
+    compression2Order: bool = False
+    shotsPerBlock: int = 0
+    blocksPer2Order: int = 0
+    version: int = 0  # detected meta format version (3, 4, or 211)
 
 
 @dataclass
@@ -83,44 +104,94 @@ class PassData:
     count: int          # number of shots
 
 
-def _detect_version(raw: bytes) -> int:
-    """
-    Auto-detect v3 vs v4 by checking which header size yields a record
-    count matching the shotCount + shapeCount stored in the header.
-    """
-    if len(raw) < _V3_SIZE:
+def _parse_header_bytes(raw: bytes) -> PassHeader:
+    """Parse a header from raw bytes (meta file or embedded), auto-detecting
+    the version by size and validating the magic number."""
+    size = len(raw)
+
+    if size >= _V211_SIZE:
+        fmt, fields, ver = _V211_FMT, _V211_FIELDS, 211
+    elif size >= _V4_SIZE:
+        fmt, fields, ver = _V4_FMT, _V4_FIELDS, 4
+    elif size >= _V3_SIZE:
+        fmt, fields, ver = _V3_FMT, _V3_FIELDS, 3
+    else:
         raise ValueError(
-            f"File too small ({len(raw)} bytes) for a v3 header "
-            f"({_V3_SIZE} bytes)."
+            f"Header too small ({size} bytes); minimum is {_V3_SIZE}."
         )
 
-    # Parse the v3 portion to read shotCount + shapeCount
-    v3_vals = struct.unpack_from(_V3_FMT, raw, 0)
-    expected_records = v3_vals[12] + v3_vals[13]  # shotCount + shapeCount
+    values = struct.unpack_from(fmt, raw, 0)
+    if values[0] != _STRIPE_SYMBOL:
+        raise ValueError(
+            f"Invalid header magic: 0x{values[0]:08x} "
+            f"(expected 0x{_STRIPE_SYMBOL:08x})."
+        )
 
-    remaining_v3 = len(raw) - _V3_SIZE
-    remaining_v4 = len(raw) - _V4_SIZE
+    field_dict = dict(zip(fields, values))
+    field_dict["version"] = ver
+    return PassHeader(**field_dict)
 
-    # Check v3 first: remaining / 8 == expected records
-    if remaining_v3 >= 0 and remaining_v3 % 8 == 0:
-        if remaining_v3 // 8 == expected_records:
-            return 3
 
-    # Check v4
-    if remaining_v4 >= 0 and remaining_v4 % 8 == 0:
-        v4_vals = struct.unpack_from(_V4_FMT, raw, 0)
-        if remaining_v4 // 8 == v4_vals[12] + v4_vals[13]:
-            return 4
+def parse_meta_file(path: str | Path) -> PassHeader:
+    """Parse a .pass.meta file and return the header.
 
-    # Fallback: whichever gives clean 8-byte alignment
-    if remaining_v4 >= 0 and remaining_v4 % 8 == 0:
-        return 4
-    return 3
+    Parameters
+    ----------
+    path : str or Path
+        Path to the .pass.meta file.
+
+    Returns
+    -------
+    PassHeader
+        Parsed metadata header.
+    """
+    raw = Path(path).read_bytes()
+    return _parse_header_bytes(raw)
+
+
+def _read_records(raw, offset: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """Extract shot arrays from raw 8-byte records starting at *offset*.
+
+    Returns (x, y, dwell, n_shots) arrays.
+    """
+    n_records = (len(raw) - offset) // 8
+    if n_records == 0:
+        empty = np.empty(0, dtype=np.float32)
+        return empty, empty, empty.copy(), 0
+
+    # Read as uint64 — .copy() detaches from any mmap
+    raw64 = np.frombuffer(
+        raw, dtype=np.dtype("<u8"), count=n_records, offset=offset,
+    ).copy()
+
+    # Bitfield extraction via 64-bit arithmetic:
+    #   bits  0- 1: mID      (2 bits)
+    #   bits  2-15: mDwell  (14 bits)
+    #   bits 16-31: mX      (16 bits)
+    #   bits 32-63: mY      (32 bits)
+    m_id = (raw64 & np.uint64(0x3)).astype(np.uint8)
+    m_dwell = ((raw64 >> np.uint64(2)) & np.uint64(0x3FFF)).astype(np.uint16)
+    m_x = ((raw64 >> np.uint64(16)) & np.uint64(0xFFFF)).astype(np.uint16)
+    m_y = (raw64 >> np.uint64(32)).astype(np.uint32)
+
+    # Keep only shots (mID == 0)
+    shot_mask = m_id == 0
+    del m_id, raw64
+
+    x = m_x[shot_mask].astype(np.float32)
+    y = m_y[shot_mask].astype(np.float32)
+    dwell = m_dwell[shot_mask].astype(np.float32)
+    n_shots = int(np.sum(shot_mask))
+    del m_x, m_y, m_dwell, shot_mask
+
+    return x, y, dwell, n_shots
 
 
 def parse_pass_file(path: str | Path) -> PassData:
-    """
-    Parse a .pass binary file (auto-detects v3 vs v4).
+    """Parse a .pass binary file with its companion .pass.meta metadata.
+
+    The .pass file is a flat stream of 8-byte records (no header).
+    Metadata is read from a companion .pass.meta file if present.
 
     Parameters
     ----------
@@ -135,8 +206,14 @@ def parse_pass_file(path: str | Path) -> PassData:
     path = Path(path)
     file_size = path.stat().st_size
 
-    # Use memory-mapped I/O for large files (>10 MB) to avoid copying
-    # the entire file into Python memory — lets the OS page it in on demand.
+    # ── look for companion .pass.meta ───────────────────────────────
+    meta_path = path.parent / (path.name + ".meta")
+    if meta_path.is_file():
+        header = parse_meta_file(meta_path)
+    else:
+        header = PassHeader()
+
+    # ── memory-map large files ──────────────────────────────────────
     if file_size > 10 * 1024 * 1024:
         f = open(path, 'rb')
         mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
@@ -147,62 +224,8 @@ def parse_pass_file(path: str | Path) -> PassData:
         mm = None
 
     try:
-        version = _detect_version(raw)
-
-        # ── parse header ────────────────────────────────────────────────
-        if version == 4:
-            fmt, size, fields = _V4_FMT, _V4_SIZE, _V4_FIELDS
-        else:
-            fmt, size, fields = _V3_FMT, _V3_SIZE, _V3_FIELDS
-
-        values = struct.unpack_from(fmt, raw, 0)
-        field_dict = dict(zip(fields, values))
-        field_dict["version"] = version
-        header = PassHeader(**field_dict)
-
-        # ── parse records ───────────────────────────────────────────────
-        n_records = (len(raw) - size) // 8
-        if n_records == 0:
-            return PassData(
-                header=header,
-                x=np.empty(0, dtype=np.float32),
-                y=np.empty(0, dtype=np.float32),
-                dwell=np.empty(0, dtype=np.float32),
-                count=0,
-            )
-
-        # Read as uint64 → single contiguous view, no reshape needed.
-        # .copy() detaches from the mmap so it can be safely closed afterwards.
-        raw64 = np.frombuffer(raw, dtype=np.dtype("<u8"), count=n_records, offset=size).copy()
-
-        # Bitfield extraction via 64-bit arithmetic — avoids creating
-        # the intermediate 2-column uint32 array (halves temp memory).
-        #   bits  0- 1: mID      (2 bits)
-        #   bits  2-15: mDwell  (14 bits)
-        #   bits 16-31: mX      (16 bits)
-        #   bits 32-63: mY      (32 bits)
-        m_id = (raw64 & np.uint64(0x3)).astype(np.uint8)
-        m_dwell = ((raw64 >> np.uint64(2)) & np.uint64(0x3FFF)).astype(np.uint16)
-        m_x = ((raw64 >> np.uint64(16)) & np.uint64(0xFFFF)).astype(np.uint16)
-        m_y = (raw64 >> np.uint64(32)).astype(np.uint32)
-
-        # Keep only shots (mID == 0) — free intermediate arrays early
-        shot_mask = m_id == 0
-        del m_id, raw64
-
-        x = m_x[shot_mask].astype(np.float32)
-        y = m_y[shot_mask].astype(np.float32)
-        dwell = m_dwell[shot_mask].astype(np.float32)
-        n_shots = int(np.sum(shot_mask))
-        del m_x, m_y, m_dwell, shot_mask
-
-        return PassData(
-            header=header,
-            x=x,
-            y=y,
-            dwell=dwell,
-            count=n_shots,
-        )
+        x, y, dwell, n_shots = _read_records(raw)
+        return PassData(header=header, x=x, y=y, dwell=dwell, count=n_shots)
     finally:
         if mm is not None:
             mm.close()
