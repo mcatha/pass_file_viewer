@@ -405,6 +405,15 @@ View
 ├── Marker Mode ►
 │   ├── ● Disc
 │   └── ○ Gaussian
+├── Wafer Outline ►
+│   ├── ● None
+│   ├── ○ 2" (51 mm)
+│   ├── ○ 4" (100 mm)
+│   ├── ○ 5" (125 mm)
+│   ├── ○ 6" (150 mm)
+│   ├── ○ 8" (200 mm)
+│   ├── ○ 12" (300 mm)
+│   └── ○ 18" (450 mm)
 ├── ─────────────────────
 ├── Disc Alpha Controls ►        [enabled in Disc mode]
 │   ├── Overlap (ow): 0.050
@@ -502,6 +511,10 @@ An in-canvas label shows the current decimation state:
 ```
 
 Fields: total shots in file, visible (viewport-culled), active stride, rendered count, data-per-pixel, current per-shot alpha.
+
+### Wafer outline
+
+**View → Wafer Outline** provides a submenu of standard wafer diameters: None, 2" (51 mm), 4" (100 mm), 5" (125 mm), 6" (150 mm), 8" (200 mm), 12" (300 mm), 18" (450 mm). Selecting a size draws a circle of that diameter centered on the wafer origin (0, 0 in absolute coordinates). The circle uses a 256-segment `visuals.Line` with the same axis color `(0.6, 0.6, 0.6, 0.8)`. The outline repositions automatically when new data is loaded (since the centroid shift changes). Selecting "None" hides the circle.
 
 ### Stripe region hover
 

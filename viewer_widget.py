@@ -44,6 +44,10 @@ _MIN_BOX_SEL_PX = 4  # minimum box-selection marker size in screen pixels
 _RUBBER_BAND_PEN = QColor(100, 200, 255, 200)
 _RUBBER_BAND_FILL = QColor(100, 200, 255, 40)
 _BG_COLOR = "#1e1e1e"
+
+# Unit circle for wafer outline (257 points → 256 segments, closed)
+_theta = np.linspace(0, 2 * np.pi, 257)
+_UNIT_CIRCLE = np.column_stack([np.cos(_theta), np.sin(_theta)])
 _ARROW_COLOR = QColor(200, 200, 200, 220)
 _LABEL_COLOR = QColor(255, 255, 255, 255)    # pure white
 _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
@@ -429,6 +433,14 @@ class ShotViewerWidget(QWidget):
             np.zeros((1, 2), dtype=np.float32),
             size=8, face_color=(1, 1, 1, 0.9), edge_width=0,
         )
+        # Wafer outline circle
+        self._wafer_diameter_nm: float | None = None
+        self._wafer_outline = visuals.Line(
+            pos=np.zeros((2, 2), dtype=np.float64),
+            color=_AXIS_COLOR, width=1, connect='strip',
+            parent=self._visual_root,
+        )
+        self._wafer_outline.visible = False
         # Layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -713,6 +725,10 @@ class ShotViewerWidget(QWidget):
               f"fit: {(_t5-_t4)*1000:.0f}ms  total: {(_t5-_t0)*1000:.0f}ms  "
               f"({n_pts:,} pts)")
 
+        # Reposition wafer outline if active (centroid changed)
+        if self._wafer_diameter_nm is not None:
+            self.set_wafer_outline(self._wafer_diameter_nm)
+
     def set_stripe_regions(self, regions: list[dict]) -> None:
         """Set stripe region metadata for hover-activated rectangle display."""
         self._stripe_regions = regions
@@ -762,6 +778,18 @@ class ShotViewerWidget(QWidget):
         else:
             # Fallback: lower-right corner of the canvas
             self._stripe_tooltip.move(cw - tw - pad, ch - th - pad)
+
+    def set_wafer_outline(self, diameter_nm: float | None) -> None:
+        """Show or hide a wafer outline circle of the given diameter (nm)."""
+        self._wafer_diameter_nm = diameter_nm
+        if diameter_nm is None:
+            self._wafer_outline.visible = False
+            return
+        radius = diameter_nm / 2.0
+        center = -self._origin
+        pts = _UNIT_CIRCLE * radius + center
+        self._wafer_outline.set_data(pts.astype(np.float64))
+        self._wafer_outline.visible = True
 
     def _build_kdtree_async(self, positions: np.ndarray) -> None:
         """Build the KD-tree on a worker thread."""
