@@ -553,6 +553,17 @@ class ShotViewerWidget(QWidget):
         self._pending_hover_pos: tuple[float, float] | None = None
         self._pending_hover_px: tuple[int, int] = (0, 0)
 
+        # Stripe region hover state
+        self._stripe_regions: list[dict] = []
+        self._stripe_aabbs: list[tuple[float, float, float, float]] = []
+        self._stripe_rect: visuals.Rectangle | None = None
+        self._hovered_stripe_idx: int | None = None
+
+        self._stripe_tooltip = QLabel(self._canvas.native)
+        self._stripe_tooltip.setStyleSheet(_tooltip_style)
+        self._stripe_tooltip.setVisible(False)
+        self._stripe_tooltip.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
         # Rubber-band drag state
         self._rubber_dragging = False
         self._rubber_start_px: tuple[float, float] | None = None  # pixel coords
@@ -701,6 +712,56 @@ class ShotViewerWidget(QWidget):
               f"upload: {(_t3-_t2)*1000:.0f}ms  axes: {(_t4-_t3)*1000:.0f}ms  "
               f"fit: {(_t5-_t4)*1000:.0f}ms  total: {(_t5-_t0)*1000:.0f}ms  "
               f"({n_pts:,} pts)")
+
+    def set_stripe_regions(self, regions: list[dict]) -> None:
+        """Set stripe region metadata for hover-activated rectangle display."""
+        self._stripe_regions = regions
+        self._hovered_stripe_idx = None
+        self._stripe_tooltip.setVisible(False)
+
+        # Precompute centroid-shifted AABBs
+        self._stripe_aabbs = []
+        for r in regions:
+            x0 = r["originX"] - self._origin[0]
+            y0 = r["originY"] - self._origin[1]
+            x1 = x0 + r["width"]
+            y1 = y0 + r["length"]
+            self._stripe_aabbs.append((x0, y0, x1, y1))
+
+        # Create or reset the single reusable rectangle visual
+        if self._stripe_rect is not None:
+            self._stripe_rect.parent = None
+            self._stripe_rect = None
+        if regions:
+            self._stripe_rect = visuals.Rectangle(
+                center=(0, 0), width=1, height=1,
+                border_color=(1, 1, 0.5, 0.8),
+                color=(0, 0, 0, 0),
+                border_width=1,
+                parent=self._visual_root,
+            )
+            self._stripe_rect.visible = False
+
+    def _position_stripe_tooltip(self) -> None:
+        """Position the stripe tooltip near the rectangle or in the lower-right."""
+        if self._hovered_stripe_idx is None:
+            return
+        aabb = self._stripe_aabbs[self._hovered_stripe_idx]
+        # Try the top-right corner of the rectangle
+        tr_corner = np.array([aabb[2], aabb[3]], dtype=np.float64)
+        screen = self._data_to_canvas(tr_corner)
+        cw = self._canvas.native.width()
+        ch = self._canvas.native.height()
+        tw = self._stripe_tooltip.width()
+        th = self._stripe_tooltip.height()
+        pad = 10
+        if (screen is not None
+                and 0 <= screen[0] + pad + tw <= cw
+                and 0 <= screen[1] - th - pad <= ch):
+            self._stripe_tooltip.move(int(screen[0]) + pad, int(screen[1]) - th - pad)
+        else:
+            # Fallback: lower-right corner of the canvas
+            self._stripe_tooltip.move(cw - tw - pad, ch - th - pad)
 
     def _build_kdtree_async(self, positions: np.ndarray) -> None:
         """Build the KD-tree on a worker thread."""
@@ -1468,6 +1529,10 @@ class ShotViewerWidget(QWidget):
             if screen_pos is not None:
                 self._tooltip.move(int(screen_pos[0]) + 20, int(screen_pos[1]) - self._tooltip.height() - 10)
 
+        # Reposition stripe tooltip so it stays anchored during pan/zoom
+        if self._hovered_stripe_idx is not None:
+            self._position_stripe_tooltip()
+
         # Throttled shot stride update on zoom
         if self._all_positions is not None:
             self._shot_decim_timer.start()
@@ -1620,10 +1685,10 @@ class ShotViewerWidget(QWidget):
             self._ruler_end = np.array([data_x, data_y], dtype=np.float32)
             self._update_ruler_visual()
 
-        if self._kdtree is None or self._data is None:
+        if self._kdtree is None and self._data is None and not self._stripe_aabbs:
             return
 
-        # Throttle KD-tree queries to ~60 fps
+        # Throttle hover queries to ~60 fps
         self._pending_hover_pos = (data_x, data_y)
         self._pending_hover_px = (int(event.pos[0]), int(event.pos[1]))
         if not self._hover_timer.isActive():
@@ -1673,11 +1738,49 @@ class ShotViewerWidget(QWidget):
 
     def _do_hover_query(self) -> None:
         """Perform the actual KD-tree hover lookup (throttled)."""
-        if self._pending_hover_pos is None or self._kdtree is None or self._data is None:
+        if self._pending_hover_pos is None:
             return
         data_x, data_y = self._pending_hover_pos
         mx, my = self._pending_hover_px
         self._pending_hover_pos = None
+
+        # --- Stripe region hover ---
+        hovered = None
+        for i, (x0, y0, x1, y1) in enumerate(self._stripe_aabbs):
+            if x0 <= data_x <= x1 and y0 <= data_y <= y1:
+                hovered = i
+                break
+        if hovered != self._hovered_stripe_idx:
+            self._hovered_stripe_idx = hovered
+            if hovered is not None and self._stripe_rect is not None:
+                aabb = self._stripe_aabbs[hovered]
+                cx = (aabb[0] + aabb[2]) / 2
+                cy = (aabb[1] + aabb[3]) / 2
+                w = aabb[2] - aabb[0]
+                h = aabb[3] - aabb[1]
+                self._stripe_rect.center = (cx, cy)
+                self._stripe_rect.width = w
+                self._stripe_rect.height = h
+                self._stripe_rect.visible = True
+                r = self._stripe_regions[hovered]
+                tip = (
+                    f"File: {r['name']}\n"
+                    f"Shots: {r['shots']:,}\n"
+                    f"Origin: ({r['originX']:,}, {r['originY']:,})\n"
+                    f"Width: {r['width']:,}   Length: {r['length']:,}\n"
+                    f"SubField Height: {r['subFieldHeight']:,}\n"
+                    f"Overlap: {r['overlap']:,}"
+                )
+                self._stripe_tooltip.setText(tip)
+                self._stripe_tooltip.adjustSize()
+                self._position_stripe_tooltip()
+                self._stripe_tooltip.setVisible(True)
+            elif self._stripe_rect is not None:
+                self._stripe_rect.visible = False
+                self._stripe_tooltip.setVisible(False)
+
+        if self._kdtree is None or self._data is None:
+            return
 
         scene_pos = np.array([data_x, data_y], dtype=np.float32)
 

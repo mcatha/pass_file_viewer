@@ -790,6 +790,22 @@ class MainWindow(QMainWindow):
         self._viewer.load_data(merged)
         self._selection_pane.set_data(merged)
 
+        # Pass stripe region metadata for hover rectangles
+        regions = []
+        for d, p in self._loaded_files:
+            h = d.header
+            regions.append({
+                "name": p.name,
+                "shots": d.count,
+                "originX": h.stripeOriginX,
+                "originY": h.stripeOriginY,
+                "width": h.stripeWidth,
+                "length": h.stripeLength,
+                "subFieldHeight": h.subFieldHeight,
+                "overlap": h.overlap,
+            })
+        self._viewer.set_stripe_regions(regions)
+
         # Easter egg: dollar bill green for novus_ordo
         if path.stem.lower() == "novus_ordo":
             self._viewer.set_shot_color((0.33, 0.54, 0.18, 1.0))

@@ -503,6 +503,16 @@ An in-canvas label shows the current decimation state:
 
 Fields: total shots in file, visible (viewport-culled), active stride, rendered count, data-per-pixel, current per-shot alpha.
 
+### Stripe region hover
+
+When pass files are loaded, the viewer stores each file's stripe rectangle metadata (origin, width, length). When the user hovers inside a stripe's bounding box, a yellow rectangle outline appears around that stripe's region and a tooltip displays:
+
+- File name, shot count
+- Origin (X, Y), width, length
+- SubField height, overlap
+
+The tooltip anchors to the rectangle's top-right corner. If the user zooms in so the rectangle boundary is off-screen, the tooltip moves to the lower-right corner of the canvas. Only one stripe rectangle is shown at a time — the one under the cursor. The rectangle uses a single reusable `visuals.Rectangle` that is repositioned on hover.
+
 ### Coordinate readout
 
 A bottom-left overlay label shows the current mouse position in data space:
