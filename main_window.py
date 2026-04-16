@@ -28,6 +28,8 @@ from PyQt6.QtCore import QUrl
 
 import sys as _sys
 
+import numpy as np
+
 from pass_parser import parse_pass_file, PassData
 from viewer_widget import ShotViewerWidget
 from selection_pane import SelectionPane
@@ -81,6 +83,7 @@ class MainWindow(QMainWindow):
         # Background parse thread state
         self._parse_thread: QThread | None = None
         self._parse_worker: _ParseWorker | None = None
+        self._loaded_files: list[tuple[PassData, Path]] = []
         # ── status bar ──────────────────────────────────────────────
         self._status_label = QLabel("  No file loaded")
         self._status_label.setStyleSheet("color: #aaa;")
@@ -107,6 +110,11 @@ class MainWindow(QMainWindow):
         open_act.setShortcut(QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self._on_open)
         file_menu.addAction(open_act)
+
+        self._incremental_act = QAction("&Incremental Open", self)
+        self._incremental_act.setCheckable(True)
+        self._incremental_act.setChecked(False)
+        file_menu.addAction(self._incremental_act)
 
         file_menu.addSeparator()
 
@@ -762,18 +770,37 @@ class MainWindow(QMainWindow):
         data: PassData = result
         path: Path = extra
 
-        self._status_label.setText(f"  Rendering {data.count:,} shots…")
+        # Apply stripe origin offset → absolute wafer coordinates (float64)
+        ox = np.float64(data.header.stripeOriginX)
+        oy = np.float64(data.header.stripeOriginY)
+        data.x = data.x.astype(np.float64) + ox
+        data.y = data.y.astype(np.float64) + oy
+
+        # Incremental merge or replace
+        if self._incremental_act.isChecked() and self._loaded_files:
+            self._loaded_files.append((data, path))
+            merged = self._merge_loaded_files()
+        else:
+            self._loaded_files = [(data, path)]
+            merged = data
+
+        self._status_label.setText(f"  Rendering {merged.count:,} shots…")
         QApplication.processEvents()
 
-        self._viewer.load_data(data)
-        self._selection_pane.set_data(data)
+        self._viewer.load_data(merged)
+        self._selection_pane.set_data(merged)
 
         # Easter egg: dollar bill green for novus_ordo
         if path.stem.lower() == "novus_ordo":
             self._viewer.set_shot_color((0.33, 0.54, 0.18, 1.0))
 
-        self.setWindowTitle(f"Pass File Viewer — {path.name}")
-        self._update_status(data, path)
+        if len(self._loaded_files) == 1:
+            self.setWindowTitle(f"Pass File Viewer — {path.name}")
+            self._update_status(data, path)
+        else:
+            n = len(self._loaded_files)
+            self.setWindowTitle(f"Pass File Viewer — {n} files")
+            self._update_status_multi(merged)
 
     def _on_kdtree_ready(self) -> None:
         """Called when the KD-tree is built — update status to show it's fully ready."""
@@ -795,6 +822,37 @@ class MainWindow(QMainWindow):
             f"File: {size_mb:.1f} MB"
         )
         # If KD-tree is still building, append a note
+        if self._viewer._kdtree is None:
+            base += "  |  Building spatial index…"
+        self._status_label.setText(base)
+
+    def _merge_loaded_files(self) -> PassData:
+        """Concatenate all loaded files into a single PassData."""
+        xs = [d.x for d, _ in self._loaded_files]
+        ys = [d.y for d, _ in self._loaded_files]
+        dwells = [d.dwell for d, _ in self._loaded_files]
+        merged_x = np.concatenate(xs)
+        merged_y = np.concatenate(ys)
+        merged_dwell = np.concatenate(dwells)
+        header = self._loaded_files[-1][0].header
+        return PassData(
+            header=header,
+            x=merged_x, y=merged_y, dwell=merged_dwell,
+            count=len(merged_x),
+        )
+
+    def _update_status_multi(self, merged: PassData) -> None:
+        """Status bar text when multiple files are loaded."""
+        n_files = len(self._loaded_files)
+        total_size = sum(p.stat().st_size for _, p in self._loaded_files)
+        size_mb = total_size / (1024 * 1024)
+        latest_name = self._loaded_files[-1][1].name
+        base = (
+            f"  {n_files} files loaded  |  "
+            f"Shots: {merged.count:,}  |  "
+            f"Latest: {latest_name}  |  "
+            f"Total: {size_mb:.1f} MB"
+        )
         if self._viewer._kdtree is None:
             base += "  |  Building spatial index…"
         self._status_label.setText(base)

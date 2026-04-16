@@ -392,6 +392,7 @@ Rotation is applied as a `MatrixTransform` on a parent `Node` that holds all vis
 ```
 File
 ├── Open Pass File… (Ctrl+O)
+├── Incremental Open (checkbox)
 └── Exit (Alt+F4)
 
 View
@@ -438,6 +439,14 @@ When the user selects a `.pass` file via File → Open, two checks run before lo
 
 1. **Missing meta file**: if no companion `.pass.meta` exists in the same directory, a warning dialog is shown and the file is not opened.
 2. **Invalid meta file**: if the `.pass.meta` file exists but cannot be parsed (wrong magic number, too small, corrupt), a warning dialog is shown with the specific error and the file is not opened.
+
+### Origin offset and coordinate system
+
+After parsing, the stripe origin from the `.pass.meta` header (`stripeOriginX`, `stripeOriginY`) is added to each shot's raw X/Y coordinates, converting them to absolute wafer coordinates in nanometres. This arithmetic uses float64 to avoid precision loss at wafer-scale magnitudes (billions of nm). The viewer's centroid shift then subtracts the mean position and casts to float32 for GPU rendering, preserving sub-nm precision.
+
+### Incremental open
+
+When **File → Incremental Open** is checked, opening a new file appends its shots to the existing view instead of replacing. Each file's shots are independently offset by their stripe origin, so shots from different stripes align in wafer coordinates. The status bar shows the number of loaded files, total shot count, and combined file size. Unchecking incremental open and opening a file replaces all data.
 
 ### FWHM slider
 

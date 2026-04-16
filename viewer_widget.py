@@ -608,11 +608,11 @@ class ShotViewerWidget(QWidget):
             return
 
         # Build Nx2 position array — centroid-shifted for GPU float32 precision.
-        # With Y values around 30-60 million nm, float32 has 2-4 nm step size.
-        # Centering near zero gives sub-nm precision at any zoom level.
-        raw_pos = np.column_stack((data.x, data.y))  # float32 from parser
+        # Input may be float64 (after origin offset) or float32 (raw bitfields).
+        # Subtract in float64 to preserve precision, then cast to float32.
+        raw_pos = np.column_stack((data.x, data.y))
         self._origin = raw_pos.mean(axis=0).astype(np.float64)
-        self._positions = (raw_pos - self._origin.astype(np.float32)).astype(np.float32)
+        self._positions = (raw_pos - self._origin).astype(np.float32)
         _t1 = _time.perf_counter()
 
         # Diameter in data units (nm): FWHM = dwell_ns * _NM_PER_NS_DWELL * _fwhm_scale
