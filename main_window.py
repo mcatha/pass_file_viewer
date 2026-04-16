@@ -622,8 +622,33 @@ class MainWindow(QMainWindow):
             "",
             "Pass Files (*.pass);;All Files (*)",
         )
-        if path:
-            self._open_file(Path(path))
+        if not path:
+            return
+
+        pass_path = Path(path)
+        meta_path = pass_path.parent / (pass_path.name + ".meta")
+
+        if not meta_path.is_file():
+            QMessageBox.warning(
+                self,
+                "Missing Meta File",
+                f"No companion meta file found:\n{meta_path.name}\n\n"
+                f"Pass files require a .pass.meta file to open.",
+            )
+            return
+
+        try:
+            from pass_parser import parse_meta_file
+            parse_meta_file(meta_path)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Invalid Meta File",
+                f"The meta file could not be read:\n{meta_path.name}\n\n{exc}",
+            )
+            return
+
+        self._open_file(pass_path)
 
     def _on_toggle_lines(self, checked: bool) -> None:
         self._viewer.set_lines_visible(checked)

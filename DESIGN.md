@@ -432,6 +432,13 @@ Help
 └── Controls
 ```
 
+### File open validation
+
+When the user selects a `.pass` file via File → Open, two checks run before loading:
+
+1. **Missing meta file**: if no companion `.pass.meta` exists in the same directory, a warning dialog is shown and the file is not opened.
+2. **Invalid meta file**: if the `.pass.meta` file exists but cannot be parsed (wrong magic number, too small, corrupt), a warning dialog is shown with the specific error and the file is not opened.
+
 ### FWHM slider
 
 Logarithmic: slider value ∈ [−200, 200] maps to scale = $10^{v/100}$, giving effective range 0.1–1000 nm/µs. Default is 60 nm/µs (slider value 78).
