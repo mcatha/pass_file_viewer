@@ -220,25 +220,38 @@ class _AxisArrowOverlay(QWidget):
                 continue
 
             # Find where the arrow tip should sit on the viewport edge.
-            # Use infinite-line intersection, but only accept the far
-            # point if it's in the +direction (t_far >= 0, i.e. a true
-            # ray hit).  When the viewport is entirely behind the arrow
-            # (t_far < 0) or the line misses altogether, clamp the
-            # origin to the viewport boundary — this is continuous with
-            # the last ray-exit position at the transition.
+            # Use the slab method as a RAY (t_far > 0) from the origin.
+            # When the ray hits, the arrow slides smoothly along the edge
+            # as the origin pans.  When the ray misses (origin off-screen,
+            # direction away from viewport), clamp origin to the viewport
+            # boundary and then ray-cast from THAT clamped point in the
+            # arrow direction — this keeps arrows spread because each
+            # direction exits a different edge.
             hit = self._line_rect_intersections(ox, oy, dx, dy, cw, ch, margin)
             if hit is not None:
                 _, (fx, fy) = hit
-                # Dot product with direction gives t_far (dx,dy is unit)
                 t_far = (fx - ox) * dx + (fy - oy) * dy
                 if t_far >= 0:
                     tx, ty = fx, fy
                 else:
-                    tx = max(margin, min(ox, cw - margin))
-                    ty = max(margin, min(oy, ch - margin))
+                    # Ray misses in +dir — clamp origin and re-cast
+                    cx = max(margin, min(ox, cw - margin))
+                    cy = max(margin, min(oy, ch - margin))
+                    hit2 = self._line_rect_intersections(
+                        cx, cy, dx, dy, cw, ch, margin)
+                    if hit2 is not None:
+                        _, (tx, ty) = hit2
+                    else:
+                        tx, ty = cx, cy
             else:
-                tx = max(margin, min(ox, cw - margin))
-                ty = max(margin, min(oy, ch - margin))
+                cx = max(margin, min(ox, cw - margin))
+                cy = max(margin, min(oy, ch - margin))
+                hit2 = self._line_rect_intersections(
+                    cx, cy, dx, dy, cw, ch, margin)
+                if hit2 is not None:
+                    _, (tx, ty) = hit2
+                else:
+                    tx, ty = cx, cy
 
             # Arrowhead geometry
             nx, ny = -dy, dx  # perpendicular in screen space
