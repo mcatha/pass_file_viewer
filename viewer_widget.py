@@ -219,21 +219,18 @@ class _AxisArrowOverlay(QWidget):
             if abs(dx) < 1e-12 and abs(dy) < 1e-12:
                 continue
 
-            # Ray-cast from origin in arrow direction to find viewport exit.
-            # If the ray misses (origin off-screen, direction away from
-            # viewport), fall back to a ray from the viewport center in the
-            # arrow direction — always hits an edge and keeps arrows spread.
+            # Infinite-line intersection: smooth whether origin is on or
+            # off screen.  When the line misses entirely (origin so far
+            # off that the axis doesn't cross the viewport), project far
+            # along the direction and clamp — this is continuous with the
+            # last intersection point at the boundary so there's no jump.
             hit = self._line_rect_intersections(ox, oy, dx, dy, cw, ch, margin)
             if hit is not None:
                 _, (tx, ty) = hit          # far point = exit in +dir
             else:
-                vcx, vcy = cw * 0.5, ch * 0.5
-                edge = self._line_rect_intersections(
-                    vcx, vcy, dx, dy, cw, ch, margin)
-                if edge is not None:
-                    _, (tx, ty) = edge
-                else:
-                    continue
+                far = max(cw, ch) * 10.0
+                tx = max(margin, min(ox + dx * far, cw - margin))
+                ty = max(margin, min(oy + dy * far, ch - margin))
 
             # Arrowhead geometry
             nx, ny = -dy, dx  # perpendicular in screen space
