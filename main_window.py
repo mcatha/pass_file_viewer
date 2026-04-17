@@ -84,6 +84,7 @@ class MainWindow(QMainWindow):
         self._parse_thread: QThread | None = None
         self._parse_worker: _ParseWorker | None = None
         self._loaded_files: list[tuple[PassData, Path]] = []
+        self._pending_open_paths: list[Path] = []  # queue for multi-file open
         # ── status bar ──────────────────────────────────────────────
         self._status_label = QLabel("  No file loaded")
         self._status_label.setStyleSheet("color: #aaa;")
@@ -658,39 +659,53 @@ class MainWindow(QMainWindow):
                 return
 
     def _on_open(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(
+        paths, _ = QFileDialog.getOpenFileNames(
             self,
-            "Open Pass File",
+            "Open Pass File(s)",
             "",
             "Pass Files (*.pass);;All Files (*)",
         )
-        if not path:
+        if not paths:
             return
 
-        pass_path = Path(path)
-        meta_path = pass_path.parent / (pass_path.name + ".meta")
+        # Validate all files up front
+        valid: list[Path] = []
+        for p in paths:
+            pass_path = Path(p)
+            meta_path = pass_path.parent / (pass_path.name + ".meta")
 
-        if not meta_path.is_file():
-            QMessageBox.warning(
-                self,
-                "Missing Meta File",
-                f"No companion meta file found:\n{meta_path.name}\n\n"
-                f"Pass files require a .pass.meta file to open.",
-            )
+            if not meta_path.is_file():
+                QMessageBox.warning(
+                    self,
+                    "Missing Meta File",
+                    f"No companion meta file found:\n{meta_path.name}\n\n"
+                    f"Pass files require a .pass.meta file to open.",
+                )
+                continue
+
+            try:
+                from pass_parser import parse_meta_file
+                parse_meta_file(meta_path)
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Meta File",
+                    f"The meta file could not be read:\n{meta_path.name}\n\n{exc}",
+                )
+                continue
+
+            valid.append(pass_path)
+
+        if not valid:
             return
 
-        try:
-            from pass_parser import parse_meta_file
-            parse_meta_file(meta_path)
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Invalid Meta File",
-                f"The meta file could not be read:\n{meta_path.name}\n\n{exc}",
-            )
-            return
+        # For multi-file selection, enable incremental mode so files merge
+        if len(valid) > 1:
+            self._incremental_act.setChecked(True)
 
-        self._open_file(pass_path)
+        # Queue paths and start loading the first one
+        self._pending_open_paths = valid[1:]
+        self._open_file(valid[0])
 
     def _on_toggle_lines(self, checked: bool) -> None:
         self._viewer.set_lines_visible(checked)
@@ -851,6 +866,11 @@ class MainWindow(QMainWindow):
             n = len(self._loaded_files)
             self.setWindowTitle(f"Pass File Viewer — {n} files")
             self._update_status_multi(merged)
+
+        # Load next queued file if multi-select is in progress
+        if self._pending_open_paths:
+            next_path = self._pending_open_paths.pop(0)
+            self._open_file(next_path)
 
     def _on_kdtree_ready(self) -> None:
         """Called when the KD-tree is built — update status to show it's fully ready."""

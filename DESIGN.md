@@ -444,7 +444,7 @@ Help
 
 ### File open validation
 
-When the user selects a `.pass` file via File → Open, two checks run before loading:
+When the user selects one or more `.pass` files via File → Open (multi-select is supported), each file is validated before loading:
 
 1. **Missing meta file**: if no companion `.pass.meta` exists in the same directory, a warning dialog is shown and the file is not opened.
 2. **Invalid meta file**: if the `.pass.meta` file exists but cannot be parsed (wrong magic number, too small, corrupt), a warning dialog is shown with the specific error and the file is not opened.
@@ -455,7 +455,7 @@ After parsing, the stripe origin from the `.pass.meta` header (`stripeOriginX`, 
 
 ### Incremental open
 
-When **File → Incremental Open** is checked, opening a new file appends its shots to the existing view instead of replacing. Each file's shots are independently offset by their stripe origin, so shots from different stripes align in wafer coordinates. The status bar shows the number of loaded files, total shot count, and combined file size. Unchecking incremental open and opening a file replaces all data.
+When **File → Incremental Open** is checked, opening a new file appends its shots to the existing view instead of replacing. Each file's shots are independently offset by their stripe origin, so shots from different stripes align in wafer coordinates. The status bar shows the number of loaded files, total shot count, and combined file size. Unchecking incremental open and opening a file replaces all data. When multiple files are selected in a single open dialog, incremental mode is enabled automatically and the files are loaded sequentially via a queue.
 
 ### FWHM slider
 
