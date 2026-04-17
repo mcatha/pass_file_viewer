@@ -1714,7 +1714,10 @@ class ShotViewerWidget(QWidget):
             self._ruler_end = np.array([data_x, data_y], dtype=np.float32)
             self._update_ruler_visual()
 
-        if self._kdtree is None and self._data is None and not self._stripe_aabbs:
+        # Stripe region hover (instant AABB check, not throttled)
+        self._update_stripe_hover(data_x, data_y)
+
+        if self._kdtree is None and self._data is None:
             return
 
         # Throttle hover queries to ~60 fps
@@ -1765,15 +1768,8 @@ class ShotViewerWidget(QWidget):
 
         return None
 
-    def _do_hover_query(self) -> None:
-        """Perform the actual KD-tree hover lookup (throttled)."""
-        if self._pending_hover_pos is None:
-            return
-        data_x, data_y = self._pending_hover_pos
-        mx, my = self._pending_hover_px
-        self._pending_hover_pos = None
-
-        # --- Stripe region hover ---
+    def _update_stripe_hover(self, data_x: float, data_y: float) -> None:
+        """Check if cursor is inside a stripe AABB and show/hide rectangle."""
         hovered = None
         for i, (x0, y0, x1, y1) in enumerate(self._stripe_aabbs):
             if x0 <= data_x <= x1 and y0 <= data_y <= y1:
@@ -1807,6 +1803,14 @@ class ShotViewerWidget(QWidget):
             elif self._stripe_rect is not None:
                 self._stripe_rect.visible = False
                 self._stripe_tooltip.setVisible(False)
+
+    def _do_hover_query(self) -> None:
+        """Perform the actual KD-tree hover lookup (throttled)."""
+        if self._pending_hover_pos is None:
+            return
+        data_x, data_y = self._pending_hover_pos
+        mx, my = self._pending_hover_px
+        self._pending_hover_pos = None
 
         if self._kdtree is None or self._data is None:
             return
