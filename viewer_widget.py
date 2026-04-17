@@ -219,18 +219,26 @@ class _AxisArrowOverlay(QWidget):
             if abs(dx) < 1e-12 and abs(dy) < 1e-12:
                 continue
 
-            # Infinite-line intersection: smooth whether origin is on or
-            # off screen.  When the line misses entirely (origin so far
-            # off that the axis doesn't cross the viewport), project far
-            # along the direction and clamp — this is continuous with the
-            # last intersection point at the boundary so there's no jump.
+            # Find where the arrow tip should sit on the viewport edge.
+            # Use infinite-line intersection, but only accept the far
+            # point if it's in the +direction (t_far >= 0, i.e. a true
+            # ray hit).  When the viewport is entirely behind the arrow
+            # (t_far < 0) or the line misses altogether, clamp the
+            # origin to the viewport boundary — this is continuous with
+            # the last ray-exit position at the transition.
             hit = self._line_rect_intersections(ox, oy, dx, dy, cw, ch, margin)
             if hit is not None:
-                _, (tx, ty) = hit          # far point = exit in +dir
+                _, (fx, fy) = hit
+                # Dot product with direction gives t_far (dx,dy is unit)
+                t_far = (fx - ox) * dx + (fy - oy) * dy
+                if t_far >= 0:
+                    tx, ty = fx, fy
+                else:
+                    tx = max(margin, min(ox, cw - margin))
+                    ty = max(margin, min(oy, ch - margin))
             else:
-                far = max(cw, ch) * 10.0
-                tx = max(margin, min(ox + dx * far, cw - margin))
-                ty = max(margin, min(oy + dy * far, ch - margin))
+                tx = max(margin, min(ox, cw - margin))
+                ty = max(margin, min(oy, ch - margin))
 
             # Arrowhead geometry
             nx, ny = -dy, dx  # perpendicular in screen space
