@@ -86,10 +86,12 @@ A pass file consists of two companion files:
 
 | File | Contents |
 |------|----------|
-| `*.pass` | Headerless flat stream of 8-byte shot/shape records from byte 0 |
-| `*.pass.meta` | Metadata header in MEBL2 packed struct format |
+| `*.pass` | 8-byte shot/shape records, optionally preceded by an embedded header |
+| `*.pass.meta` | Metadata header in MEBL2 packed struct format (optional if header is embedded) |
 
-The `.pass` file contains **no header** — every byte is part of an 8-byte record. All metadata (stripe geometry, shot counts, resolution, etc.) lives in the companion `.pass.meta` file, which shares the same base name (e.g. `chip.pass` + `chip.pass.meta`).
+Pass files come in two variants:
+1. **Headerless + companion meta**: the `.pass` file is a flat stream of 8-byte records from byte 0; all metadata lives in a companion `.pass.meta` file with the same base name.
+2. **Embedded header**: the `.pass` file begins with a header (magic number `0xB3D11982` at byte 0), followed by shot/shape records. Version 1 headers are 78 bytes; version 2 headers are 88 bytes. The `stripeDataVersion` field (offset 4, `uint16`) distinguishes them.
 
 ### `.pass.meta` — MEBL2 header format
 
@@ -142,8 +144,10 @@ Only shot records (`mID == 0`) are rendered. Shape records are skipped.
 
 ### Parser behaviour
 
-- Metadata is read from the `.pass.meta` companion file. If no meta file exists, an empty header is used.
-- The `.pass` file is read from byte 0 — there is no header offset.
+- Metadata source priority: (1) companion `.pass.meta` file, (2) embedded header in the `.pass` file, (3) empty default header.
+- When a `.pass.meta` file exists, shot records are read from byte 0 of the `.pass` file.
+- When no `.pass.meta` exists but the first 4 bytes match the magic number `0xB3D11982`, the embedded header is parsed and shot records begin after the header (78 or 88 bytes depending on version).
+- When neither is available, the entire `.pass` file is treated as shot records with a default empty header.
 - Files >10 MB are memory-mapped (`mmap`) to avoid copying into Python memory.
 - Bitfield extraction uses 64-bit numpy arithmetic on a contiguous `uint64` view — no intermediate reshape.
 - Shot mask applied once; intermediate arrays freed immediately.
@@ -446,7 +450,7 @@ Help
 
 When the user selects one or more `.pass` files via File → Open (multi-select is supported), each file is validated before loading:
 
-1. **Missing meta file**: if no companion `.pass.meta` exists in the same directory, a warning dialog is shown and the file is not opened.
+1. **Missing meta file**: if no companion `.pass.meta` exists, the parser checks for an embedded header in the `.pass` file. If neither is found, the file is opened with a default empty header (no origin offset, no stripe metadata).
 2. **Invalid meta file**: if the `.pass.meta` file exists but cannot be parsed (wrong magic number, too small, corrupt), a warning dialog is shown with the specific error and the file is not opened.
 
 ### Origin offset and coordinate system

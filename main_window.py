@@ -702,25 +702,19 @@ class MainWindow(QMainWindow):
             pass_path = Path(p)
             meta_path = pass_path.parent / (pass_path.name + ".meta")
 
-            if not meta_path.is_file():
-                QMessageBox.warning(
-                    self,
-                    "Missing Meta File",
-                    f"No companion meta file found:\n{meta_path.name}\n\n"
-                    f"Pass files require a .pass.meta file to open.",
-                )
-                continue
-
-            try:
-                from pass_parser import parse_meta_file
-                parse_meta_file(meta_path)
-            except Exception as exc:
-                QMessageBox.warning(
-                    self,
-                    "Invalid Meta File",
-                    f"The meta file could not be read:\n{meta_path.name}\n\n{exc}",
-                )
-                continue
+            # Validate meta file if it exists (don't reject files without one —
+            # the parser will check for an embedded header as fallback).
+            if meta_path.is_file():
+                try:
+                    from pass_parser import parse_meta_file
+                    parse_meta_file(meta_path)
+                except Exception as exc:
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Meta File",
+                        f"The meta file could not be read:\n{meta_path.name}\n\n{exc}",
+                    )
+                    continue
 
             valid.append(pass_path)
 

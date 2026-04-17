@@ -188,10 +188,14 @@ def _read_records(raw, offset: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndar
 
 
 def parse_pass_file(path: str | Path) -> PassData:
-    """Parse a .pass binary file with its companion .pass.meta metadata.
+    """Parse a .pass binary file.
 
-    The .pass file is a flat stream of 8-byte records (no header).
     Metadata is read from a companion .pass.meta file if present.
+    Otherwise, the .pass file is checked for an embedded header
+    (magic number 0xb3d11982 at byte 0). Version 1 headers are
+    78 bytes; version 2 headers are 88 bytes. If neither a .meta
+    file nor an embedded header is found, a default empty header
+    is used and the entire file is treated as shot records.
 
     Parameters
     ----------
@@ -210,8 +214,23 @@ def parse_pass_file(path: str | Path) -> PassData:
     meta_path = path.parent / (path.name + ".meta")
     if meta_path.is_file():
         header = parse_meta_file(meta_path)
+        record_offset = 0
     else:
-        header = PassHeader()
+        # Check for embedded header (magic number at byte 0)
+        with open(path, 'rb') as probe:
+            magic_bytes = probe.read(6)  # 4 bytes magic + 2 bytes version
+        if (len(magic_bytes) >= 6
+                and struct.unpack_from("<I", magic_bytes, 0)[0] == _STRIPE_SYMBOL):
+            version = struct.unpack_from("<H", magic_bytes, 4)[0]
+            if version == 2:
+                record_offset = _V211_SIZE
+            else:
+                record_offset = _V4_SIZE
+            with open(path, 'rb') as hf:
+                header = _parse_header_bytes(hf.read(record_offset))
+        else:
+            header = PassHeader()
+            record_offset = 0
 
     # ── memory-map large files ──────────────────────────────────────
     if file_size > 10 * 1024 * 1024:
@@ -224,7 +243,7 @@ def parse_pass_file(path: str | Path) -> PassData:
         mm = None
 
     try:
-        x, y, dwell, n_shots = _read_records(raw)
+        x, y, dwell, n_shots = _read_records(raw, record_offset)
         return PassData(header=header, x=x, y=y, dwell=dwell, count=n_shots)
     finally:
         if mm is not None:
