@@ -215,43 +215,55 @@ class _AxisArrowOverlay(QWidget):
         # Prepare a QPainterPath-based text outline for high contrast labels
         from PyQt6.QtGui import QPainterPath
 
+        vcx, vcy = cw * 0.5, ch * 0.5
+
         for ox, oy, dx, dy, label in self.arrows:
             if abs(dx) < 1e-12 and abs(dy) < 1e-12:
                 continue
 
-            # Find where the arrow tip should sit on the viewport edge.
-            # Use the slab method as a RAY (t_far > 0) from the origin.
-            # When the ray hits, the arrow slides smoothly along the edge
-            # as the origin pans.  When the ray misses (origin off-screen,
-            # direction away from viewport), clamp origin to the viewport
-            # boundary and then ray-cast from THAT clamped point in the
-            # arrow direction — this keeps arrows spread because each
-            # direction exits a different edge.
+            # --- Step 1: ray-exit position (where arrow sits when axis
+            #     is visible, or the "entry" position at the transition).
             hit = self._line_rect_intersections(ox, oy, dx, dy, cw, ch, margin)
+            ray_ok = False
             if hit is not None:
                 _, (fx, fy) = hit
                 t_far = (fx - ox) * dx + (fy - oy) * dy
                 if t_far >= 0:
                     tx, ty = fx, fy
-                else:
-                    # Ray misses in +dir — clamp origin and re-cast
-                    cx = max(margin, min(ox, cw - margin))
-                    cy = max(margin, min(oy, ch - margin))
-                    hit2 = self._line_rect_intersections(
-                        cx, cy, dx, dy, cw, ch, margin)
-                    if hit2 is not None:
-                        _, (tx, ty) = hit2
-                    else:
-                        tx, ty = cx, cy
-            else:
+                    ray_ok = True
+
+            if not ray_ok:
+                # Ray missed — compute a blended position that starts
+                # where the arrow was when the axis left the viewport
+                # and slides toward the center of the relevant edge.
+
+                # "Edge position": ray from clamped origin (entry point)
                 cx = max(margin, min(ox, cw - margin))
                 cy = max(margin, min(oy, ch - margin))
                 hit2 = self._line_rect_intersections(
                     cx, cy, dx, dy, cw, ch, margin)
                 if hit2 is not None:
-                    _, (tx, ty) = hit2
+                    _, (ex, ey) = hit2
                 else:
-                    tx, ty = cx, cy
+                    ex, ey = cx, cy
+
+                # "Rest position": center of the edge the arrow points at
+                rest_hit = self._line_rect_intersections(
+                    vcx, vcy, dx, dy, cw, ch, margin)
+                if rest_hit is not None:
+                    _, (rx, ry) = rest_hit
+                else:
+                    rx, ry = ex, ey
+
+                # Blend factor: 0 when origin is at viewport edge,
+                # 1 when origin is far off-screen.
+                dx_off = max(margin - ox, 0.0, ox - (cw - margin))
+                dy_off = max(margin - oy, 0.0, oy - (ch - margin))
+                dist = _math.hypot(dx_off, dy_off)
+                blend = min(dist / (max(cw, ch) * 0.5), 1.0)
+
+                tx = ex + (rx - ex) * blend
+                ty = ey + (ry - ey) * blend
 
             # Arrowhead geometry
             nx, ny = -dy, dx  # perpendicular in screen space
