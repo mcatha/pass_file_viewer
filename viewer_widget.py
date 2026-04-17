@@ -672,6 +672,9 @@ class ShotViewerWidget(QWidget):
             priority *= (1.0 - _DWELL_WEIGHT * dwell_norm)
 
         self._shot_priority = priority
+        # Pre-sort indices by priority so the all-visible decimation path
+        # can just slice instead of running argpartition every frame.
+        self._priority_sorted = np.argsort(priority).astype(np.intp)
         # Cache data bounding box for density calculations and viewport cull fast-path
         dmin = self._positions.min(axis=0)
         dmax = self._positions.max(axis=0)
@@ -1194,24 +1197,23 @@ class ShotViewerWidget(QWidget):
 
     # ── shot decimation ─────────────────────────────────────────────
 
-    def _priority_indices(self, vis_idx: np.ndarray, stride: float) -> np.ndarray:
-        """Return ~len(vis_idx)/stride indices chosen by fixed per-shot priority.
+    def _priority_indices(self, vis_idx: np.ndarray | None,
+                          n_vis: int, stride: float) -> np.ndarray:
+        """Return ~n_vis/stride indices chosen by fixed per-shot priority.
 
-        Each shot was assigned a random priority rank at load time
-        (``self._shot_priority``).  This selects the *count* visible
-        shots with the lowest rank.  Because ranks are fixed, the same
-        shot is always chosen regardless of small changes in *vis_idx*
-        from panning — no visible flicker.
-
-        Indices are always returned in priority order (not file order)
-        so the draw order is consistent regardless of stride.
+        *vis_idx* is an index array into the full position array, or
+        ``None`` when every point is visible (avoids allocating a huge
+        arange).  *n_vis* is the visible count.
         """
-        n = len(vis_idx)
         if stride <= 1.0:
-            return vis_idx  # no decimation needed
-        count = max(1, int(n / stride))
+            if vis_idx is None:
+                return np.arange(n_vis, dtype=np.intp)
+            return vis_idx
+        count = max(1, int(n_vis / stride))
+        if vis_idx is None:
+            # All points visible — slice the pre-sorted priority order (O(1))
+            return self._priority_sorted[:count]
         priorities = self._shot_priority[vis_idx]
-        # argpartition is O(n) — much cheaper than a full sort
         top_k = np.argpartition(priorities, count)[:count]
         return vis_idx[top_k]
 
@@ -1403,7 +1405,7 @@ class ShotViewerWidget(QWidget):
         if (hasattr(self, '_data_xmin')
                 and self._data_xmin >= xmin - mx and self._data_xmax <= xmax + mx
                 and self._data_ymin >= ymin - my and self._data_ymax <= ymax + my):
-            vis_idx = np.arange(n, dtype=np.intp)
+            vis_idx = None  # sentinel: all points visible
             n_vis = n
         else:
             vis_mask = ((pos[:, 0] >= xmin - mx) & (pos[:, 0] <= xmax + mx) &
@@ -1440,7 +1442,7 @@ class ShotViewerWidget(QWidget):
 
         if key != getattr(self, '_last_view_key', None):
             self._last_view_key = key
-            idx = self._priority_indices(vis_idx, stride)
+            idx = self._priority_indices(vis_idx, n_vis, stride)
             dpos = pos[idx]
             if len(dpos) > 0:
                 print(f"[upload] rendered={len(idx)} pos_range=({dpos[:,0].min():.0f}..{dpos[:,0].max():.0f}, {dpos[:,1].min():.0f}..{dpos[:,1].max():.0f})")
