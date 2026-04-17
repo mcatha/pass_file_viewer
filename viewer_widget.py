@@ -1237,7 +1237,7 @@ class ShotViewerWidget(QWidget):
         initial_budget = min(max(min_b, int(canvas_px * spp)), max_r)
         stride = max(1.0, float(round(n / initial_budget)))
         self._decim_stride = stride
-        idx = self._priority_indices(np.arange(n, dtype=np.intp), stride)
+        idx = self._priority_indices(None, n, stride)
         dpos = pos[idx]
         self._uploaded_positions = dpos
         dsizes = self._uniform_size if self._uniform_size is not None else self._all_sizes[idx]
@@ -1882,7 +1882,11 @@ class ShotViewerWidget(QWidget):
             self._rotate_start_pos = (float(event.pos[0]), float(event.pos[1]))
             self._rotate_start_angle = self._rotation_deg
             # Save current transform so we can compose delta on top
-            self._rotate_base_matrix = self._visual_root.transform.matrix.copy()
+            tr = self._visual_root.transform
+            if hasattr(tr, 'matrix'):
+                self._rotate_base_matrix = tr.matrix.copy()
+            else:
+                self._rotate_base_matrix = np.eye(4)
             # Capture mouse position in data space as rotation pivot
             try:
                 tr = self._canvas.scene.node_transform(self._visual_root)
