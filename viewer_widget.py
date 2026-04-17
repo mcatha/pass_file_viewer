@@ -260,7 +260,7 @@ class _AxisArrowOverlay(QWidget):
                 dx_off = max(margin - ox, 0.0, ox - (cw - margin))
                 dy_off = max(margin - oy, 0.0, oy - (ch - margin))
                 dist = _math.hypot(dx_off, dy_off)
-                blend = min(dist / (max(cw, ch) * 0.5), 1.0)
+                blend = min(dist / (max(cw, ch) * 3.0), 1.0)
 
                 tx = ex + (rx - ex) * blend
                 ty = ey + (ry - ey) * blend
