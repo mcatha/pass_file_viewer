@@ -655,6 +655,7 @@ class ShotViewerWidget(QWidget):
         # Store full-resolution data; visuals always get decimated subset
         self._all_positions = self._positions
         self._all_sizes = self._sizes
+        self._max_shot_size = float(np.max(self._sizes)) if not np.isscalar(self._sizes) else float(self._sizes)
         # ─── Fixed per-shot priority (computed once at load time) ────────
         # Base = uniform random → perfectly proportional decimation.
         # Dwell bias: bigger dwell → priority scaled DOWN by up to 15%
@@ -671,11 +672,15 @@ class ShotViewerWidget(QWidget):
             priority *= (1.0 - _DWELL_WEIGHT * dwell_norm)
 
         self._shot_priority = priority
-        # Cache data bounding box for density calculations
+        # Cache data bounding box for density calculations and viewport cull fast-path
         dmin = self._positions.min(axis=0)
         dmax = self._positions.max(axis=0)
         self._data_width = float(dmax[0] - dmin[0])
         self._data_height = float(dmax[1] - dmin[1])
+        self._data_xmin = float(dmin[0])
+        self._data_xmax = float(dmax[0])
+        self._data_ymin = float(dmin[1])
+        self._data_ymax = float(dmax[1])
 
         # Compute colors for current mode
         self._face_colors = _SHOT_COLOR
@@ -1386,18 +1391,25 @@ class ShotViewerWidget(QWidget):
 
         if self._uniform_size is not None:
             max_shot_size = self._uniform_size
-        elif self._all_sizes is not None and not np.isscalar(self._all_sizes):
-            max_shot_size = float(self._all_sizes.max())
         else:
-            max_shot_size = 1.0
+            max_shot_size = getattr(self, '_max_shot_size', 1.0)
         half_disc = max(max_shot_size, dpp) * 0.5
 
         mx = (xmax - xmin) * 0.05 + half_disc
         my = (ymax - ymin) * 0.05 + half_disc
-        vis_mask = ((pos[:, 0] >= xmin - mx) & (pos[:, 0] <= xmax + mx) &
-                    (pos[:, 1] >= ymin - my) & (pos[:, 1] <= ymax + my))
-        vis_idx = np.nonzero(vis_mask)[0]
-        n_vis = len(vis_idx)
+
+        # Fast path: skip per-point viewport cull if all data fits in viewport.
+        # Comparing 4 floats instead of 4×N numpy arrays.
+        if (hasattr(self, '_data_xmin')
+                and self._data_xmin >= xmin - mx and self._data_xmax <= xmax + mx
+                and self._data_ymin >= ymin - my and self._data_ymax <= ymax + my):
+            vis_idx = np.arange(n, dtype=np.intp)
+            n_vis = n
+        else:
+            vis_mask = ((pos[:, 0] >= xmin - mx) & (pos[:, 0] <= xmax + mx) &
+                        (pos[:, 1] >= ymin - my) & (pos[:, 1] <= ymax + my))
+            vis_idx = np.nonzero(vis_mask)[0]
+            n_vis = len(vis_idx)
 
         # Stride: budget scales with how many screen pixels the data covers.
         # Per axis, use min(data_extent, viewport_extent) so that a narrow
