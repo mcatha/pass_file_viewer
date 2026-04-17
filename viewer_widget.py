@@ -1747,6 +1747,11 @@ class ShotViewerWidget(QWidget):
             max_r = float(np.max(self._sizes)) * scale / 2.0
         search_r = max(max_r, min_radius_data)
 
+        # Cap the search radius to avoid returning millions of candidates
+        # when zoomed out.  10× the natural marker radius is generous enough
+        # for click-selection; beyond that, individual shots are sub-pixel.
+        search_r = min(search_r, max(max_r * 10.0, 1.0))
+
         idxs = self._kdtree.query_ball_point(scene_pos, r=search_r)
         if not idxs:
             return None
@@ -1817,7 +1822,7 @@ class ShotViewerWidget(QWidget):
 
         scene_pos = np.array([data_x, data_y], dtype=np.float32)
 
-        # Minimum hit radius: 5 pixels converted to data units
+        # Minimum hit radius: 5 pixels converted to data units.
         try:
             tr_h = self._canvas.scene.node_transform(self._visual_root)
             p0_h = tr_h.map([0, 0, 0, 1])
