@@ -1658,12 +1658,16 @@ class ShotViewerWidget(QWidget):
                 arrows.append((far_x, far_y, dx, dy, pos_label))
                 arrows.append((near_x, near_y, -dx, -dy, neg_label))
             else:
-                # Line doesn't cross viewport — clamp origin to viewport edge
-                # and place both arrows at the clamped point.
-                cx = max(margin, min(ox, cw - margin))
-                cy = max(margin, min(oy, ch - margin))
-                arrows.append((cx, cy, dx, dy, pos_label))
-                arrows.append((cx, cy, -dx, -dy, neg_label))
+                # Line doesn't cross viewport — project far along each
+                # direction from the origin and clamp to viewport edge
+                # so +/- arrows land on different edges.
+                far = max(cw, ch) * 2.0
+                for sign, lbl in [(1, pos_label), (-1, neg_label)]:
+                    px = ox + sign * dx * far
+                    py = oy + sign * dy * far
+                    cx = max(margin, min(px, cw - margin))
+                    cy = max(margin, min(py, ch - margin))
+                    arrows.append((cx, cy, sign * dx, sign * dy, lbl))
         self._arrow_overlay.arrows = arrows
         self._arrow_overlay.update()
 
