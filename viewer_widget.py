@@ -718,6 +718,7 @@ class ShotViewerWidget(QWidget):
         # Reset rotation
         self._rotation_deg = 0.0
         self._visual_root.transform = scene.transforms.MatrixTransform()
+        self._last_cam_sig = None  # force arrow/axis reposition after origin change
         self._fit_view()
         _t5 = _time.perf_counter()
         print(f"[load] positions: {(_t1-_t0)*1000:.0f}ms  sizes: {(_t2-_t1)*1000:.0f}ms  "
