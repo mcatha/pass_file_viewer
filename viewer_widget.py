@@ -168,14 +168,17 @@ class _AxisArrowOverlay(QWidget):
         self.arrows: list[tuple[float, float, float, float, str]] = []
 
     @staticmethod
-    def _intersect_ray_rect(
+    def _line_rect_intersections(
         ox: float, oy: float, dx: float, dy: float,
         w: float, h: float, margin: float,
-    ) -> tuple[float, float] | None:
-        """Find where the line from (ox, oy) in direction (dx, dy) *exits*
-        the viewport inset by *margin*.  Uses slab intersection so the
-        origin can be off-screen (the line still crosses correctly).
-        Returns the exit point or None if the line doesn't cross."""
+    ) -> tuple[tuple[float, float], tuple[float, float]] | None:
+        """Find where the infinite line through (ox, oy) in direction (dx, dy)
+        intersects the viewport inset by *margin*.
+
+        Returns ((near_x, near_y), (far_x, far_y)) — the two intersection
+        points where the line crosses the viewport boundary. 'near' is the
+        point at lowest t (most negative direction), 'far' at highest t
+        (most positive direction).  Returns None if the line doesn't cross."""
         xmin, xmax = margin, w - margin
         ymin, ymax = margin, h - margin
         t_near = -float('inf')
@@ -191,9 +194,10 @@ class _AxisArrowOverlay(QWidget):
                 t1, t2 = t2, t1
             t_near = max(t_near, t1)
             t_far = min(t_far, t2)
-        if t_far < t_near or t_far <= 0:
+        if t_far < t_near:
             return None
-        return ox + t_far * dx, oy + t_far * dy
+        return ((ox + t_near * dx, oy + t_near * dy),
+                (ox + t_far * dx, oy + t_far * dy))
 
     def paintEvent(self, event) -> None:  # noqa: N802
         if not self.arrows:
@@ -211,11 +215,7 @@ class _AxisArrowOverlay(QWidget):
         # Prepare a QPainterPath-based text outline for high contrast labels
         from PyQt6.QtGui import QPainterPath
 
-        for ox, oy, dx, dy, label in self.arrows:
-            hit = self._intersect_ray_rect(ox, oy, dx, dy, cw, ch, margin)
-            if hit is None:
-                continue
-            tx, ty = hit
+        for tx, ty, dx, dy, label in self.arrows:
 
             # Arrowhead geometry
             nx, ny = -dy, dx  # perpendicular in screen space
@@ -1640,17 +1640,31 @@ class ShotViewerWidget(QWidget):
         xdx, xdy = _unit(float(px0[0]) - float(o0[0]), float(px0[1]) - float(o0[1]))
         ydx, ydy = _unit(float(py0[0]) - float(o0[0]), float(py0[1]) - float(o0[1]))
 
-        print(f"[axis] cw={cw} ch={ch} ox={ox:.1f} oy={oy:.1f} "
-              f"xdir=({xdx:.4f},{xdy:.4f}) ydir=({ydx:.4f},{ydy:.4f}) "
-              f"step={step:.1f} cam_rect={self._camera.rect}")
-
-        # Ray-cast from the true origin so arrows sit exactly on the axes.
-        self._arrow_overlay.arrows = [
-            (ox, oy,  xdx,  xdy,  "X"),
-            (ox, oy, -xdx, -xdy, "−X"),
-            (ox, oy,  ydx,  ydy,  "Y"),
-            (ox, oy, -ydx, -ydy, "−Y"),
-        ]
+        # Each axis is an infinite line through the origin. Find both
+        # intersection points with the viewport, then assign the +dir
+        # arrow to the far point and the -dir arrow to the near point.
+        arrows = []
+        margin = 6
+        for dx, dy, pos_label, neg_label in [
+            (xdx, xdy, "X", "−X"),
+            (ydx, ydy, "Y", "−Y"),
+        ]:
+            if abs(dx) < 1e-12 and abs(dy) < 1e-12:
+                continue
+            hit = self._arrow_overlay._line_rect_intersections(
+                ox, oy, dx, dy, cw, ch, margin)
+            if hit is not None:
+                (near_x, near_y), (far_x, far_y) = hit
+                arrows.append((far_x, far_y, dx, dy, pos_label))
+                arrows.append((near_x, near_y, -dx, -dy, neg_label))
+            else:
+                # Line doesn't cross viewport — clamp origin to viewport edge
+                # and place both arrows at the clamped point.
+                cx = max(margin, min(ox, cw - margin))
+                cy = max(margin, min(oy, ch - margin))
+                arrows.append((cx, cy, dx, dy, pos_label))
+                arrows.append((cx, cy, -dx, -dy, neg_label))
+        self._arrow_overlay.arrows = arrows
         self._arrow_overlay.update()
 
         # Clip axis lines to viewport bounds + margin so GPU never

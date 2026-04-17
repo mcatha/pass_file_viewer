@@ -381,7 +381,7 @@ The ruler is redrawn on camera changes (zoom/pan/rotate) to keep tick sizes corr
 
 ### Rotation
 
-Rotation is applied as a `MatrixTransform` on a parent `Node` that holds all visuals. The camera's own transforms remain unaffected. Axis arrowheads (`_AxisArrowOverlay`) are painted on a transparent Qt overlay widget and track orientation via ray-rectangle intersection.
+Rotation is applied as a `MatrixTransform` on a parent `Node` that holds all visuals. The camera's own transforms remain unaffected. Axis arrowheads (`_AxisArrowOverlay`) are painted on a transparent Qt overlay widget and track orientation via line-rectangle intersection. When the axis line intersects the viewport, arrows are placed at both intersection points. When the axis line does not intersect the viewport (origin panned far off-screen), arrows are clamped to the nearest viewport edge so they remain visible at all times.
 
 ---
 
