@@ -1549,10 +1549,11 @@ class ShotViewerWidget(QWidget):
         self._coord_label.move(4, canvas_h - self._coord_label.height() - 4)
 
     def _camera_signature(self) -> tuple:
-        """Cheap fingerprint of the current camera state (rect + rotation)."""
+        """Cheap fingerprint of the current camera state (rect + rotation + canvas size)."""
         r = self._camera.rect
         return (float(r.left), float(r.right), float(r.bottom), float(r.top),
-                self._rotation_deg)
+                self._rotation_deg,
+                self._canvas.native.width(), self._canvas.native.height())
 
     def _on_camera_change(self, event=None) -> None:
         """Reposition the pinned tooltip and axis labels when the camera changes."""
