@@ -107,7 +107,7 @@ class MainWindow(QMainWindow):
         # File menu
         file_menu = menu_bar.addMenu("&File")
 
-        open_act = QAction("&Open Pass File…", self)
+        open_act = QAction("&Open Pass Files…", self)
         open_act.setShortcut(QKeySequence.StandardKey.Open)
         open_act.triggered.connect(self._on_open)
         file_menu.addAction(open_act)
