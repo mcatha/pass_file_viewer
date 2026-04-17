@@ -56,8 +56,8 @@ class _ParseWorker(QObject):
 
 
 class _MultiParseWorker(QObject):
-    """Parses multiple .pass files on a background thread."""
-    progress = pyqtSignal(int, int)  # (current, total)
+    """Parses multiple .pass files in parallel on a thread pool."""
+    progress = pyqtSignal(int, int)  # (completed, total)
     finished = pyqtSignal(object, object)  # (list[(PassData, Path)], None) or (None, error_str)
 
     def __init__(self, paths: list[Path]) -> None:
@@ -65,16 +65,23 @@ class _MultiParseWorker(QObject):
         self._paths = paths
 
     def run(self) -> None:
-        results: list[tuple] = []
-        for i, path in enumerate(self._paths):
-            self.progress.emit(i + 1, len(self._paths))
-            try:
-                data = parse_pass_file(path)
-                results.append((data, path))
-            except Exception as exc:
-                self.finished.emit(None, f"{path.name}: {exc}")
-                return
-        self.finished.emit(results, None)
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        n = len(self._paths)
+        results: dict[Path, PassData] = {}
+        with ThreadPoolExecutor() as pool:
+            futures = {pool.submit(parse_pass_file, p): p for p in self._paths}
+            for future in as_completed(futures):
+                path = futures[future]
+                try:
+                    data = future.result()
+                    results[path] = data
+                except Exception as exc:
+                    self.finished.emit(None, f"{path.name}: {exc}")
+                    return
+                self.progress.emit(len(results), n)
+        # Return results in the original file order
+        ordered = [(results[p], p) for p in self._paths]
+        self.finished.emit(ordered, None)
 
 
 class MainWindow(QMainWindow):
