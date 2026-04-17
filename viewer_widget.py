@@ -1658,31 +1658,19 @@ class ShotViewerWidget(QWidget):
                 arrows.append((far_x, far_y, dx, dy, pos_label))
                 arrows.append((near_x, near_y, -dx, -dy, neg_label))
             else:
-                # Line doesn't cross viewport — cast a ray from the
-                # viewport center toward each arrow's ideal position so
-                # arrows spread out around the viewport perimeter.
+                # Line doesn't cross viewport — ray-cast from viewport
+                # center in each arrow's screen-space direction (ignoring
+                # origin position to avoid bias toward a single corner).
                 vcx, vcy = cw * 0.5, ch * 0.5
-                far = max(cw, ch) * 2.0
                 _intersect = self._arrow_overlay._line_rect_intersections
                 for sign, lbl in [(1, pos_label), (-1, neg_label)]:
-                    # Ideal position far along this arrow's direction
-                    tx = ox + sign * dx * far
-                    ty = oy + sign * dy * far
-                    # Ray from viewport center toward that ideal position
-                    rdx, rdy = tx - vcx, ty - vcy
-                    rlen = _math.hypot(rdx, rdy)
-                    if rlen < 1e-6:
-                        rdx, rdy = sign * dx, sign * dy
-                    else:
-                        rdx, rdy = rdx / rlen, rdy / rlen
+                    rdx, rdy = sign * dx, sign * dy
                     edge = _intersect(vcx, vcy, rdx, rdy, cw, ch, margin)
                     if edge is not None:
                         _, (ex, ey) = edge  # far point = exit
-                        arrows.append((ex, ey, sign * dx, sign * dy, lbl))
+                        arrows.append((ex, ey, rdx, rdy, lbl))
                     else:
-                        # Shouldn't happen (center is inside rect), but
-                        # fall back to center as safety net.
-                        arrows.append((vcx, vcy, sign * dx, sign * dy, lbl))
+                        arrows.append((vcx, vcy, rdx, rdy, lbl))
         self._arrow_overlay.arrows = arrows
         self._arrow_overlay.update()
 
