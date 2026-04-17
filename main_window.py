@@ -55,6 +55,28 @@ class _ParseWorker(QObject):
             self.finished.emit(None, str(exc))
 
 
+class _MultiParseWorker(QObject):
+    """Parses multiple .pass files on a background thread."""
+    progress = pyqtSignal(int, int)  # (current, total)
+    finished = pyqtSignal(object, object)  # (list[(PassData, Path)], None) or (None, error_str)
+
+    def __init__(self, paths: list[Path]) -> None:
+        super().__init__()
+        self._paths = paths
+
+    def run(self) -> None:
+        results: list[tuple] = []
+        for i, path in enumerate(self._paths):
+            self.progress.emit(i + 1, len(self._paths))
+            try:
+                data = parse_pass_file(path)
+                results.append((data, path))
+            except Exception as exc:
+                self.finished.emit(None, f"{path.name}: {exc}")
+                return
+        self.finished.emit(results, None)
+
+
 class MainWindow(QMainWindow):
     """Top-level window for the Pass File Viewer."""
 
@@ -84,7 +106,6 @@ class MainWindow(QMainWindow):
         self._parse_thread: QThread | None = None
         self._parse_worker: _ParseWorker | None = None
         self._loaded_files: list[tuple[PassData, Path]] = []
-        self._pending_open_paths: list[Path] = []  # queue for multi-file open
         # ── status bar ──────────────────────────────────────────────
         self._status_label = QLabel("  No file loaded")
         self._status_label.setStyleSheet("color: #aaa;")
@@ -703,9 +724,13 @@ class MainWindow(QMainWindow):
         if len(valid) > 1:
             self._incremental_act.setChecked(True)
 
-        # Queue paths and start loading the first one
-        self._pending_open_paths = valid[1:]
-        self._open_file(valid[0])
+        # Single file: use the fast single-file path
+        if len(valid) == 1:
+            self._open_file(valid[0])
+            return
+
+        # Multiple files: parse all at once, then render once
+        self._open_files_batch(valid)
 
     def _on_toggle_lines(self, checked: bool) -> None:
         self._viewer.set_lines_visible(checked)
@@ -776,6 +801,83 @@ class MainWindow(QMainWindow):
         )
 
     # ── file loading ────────────────────────────────────────────────
+
+    def _open_files_batch(self, paths: list[Path]) -> None:
+        """Parse multiple files on a background thread, then render once."""
+        if self._parse_thread is not None:
+            self._parse_thread.quit()
+            self._parse_thread.wait()
+
+        n = len(paths)
+        self._status_label.setText(f"  Loading {n} files…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+
+        thread = QThread(self)
+        worker = _MultiParseWorker(paths)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(
+            lambda cur, tot: self._status_label.setText(
+                f"  Parsing file {cur}/{tot}…"
+            )
+        )
+        worker.finished.connect(self._on_multi_parse_finished)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_parse_thread_done)
+        self._parse_thread = thread
+        self._parse_worker = worker
+        thread.start()
+
+    def _on_multi_parse_finished(self, results, error) -> None:
+        """Called when batch parsing completes — merge all and render once."""
+        QApplication.restoreOverrideCursor()
+
+        if results is None:
+            QMessageBox.critical(self, "Error", f"Failed to parse file:\n{error}")
+            self._status_label.setText("  Error loading file")
+            return
+
+        # Apply stripe origin offsets
+        for data, path in results:
+            ox = np.float64(data.header.stripeOriginX)
+            oy = np.float64(data.header.stripeOriginY)
+            data.x = data.x.astype(np.float64) + ox
+            data.y = data.y.astype(np.float64) + oy
+
+        # Merge into loaded files list
+        if self._incremental_act.isChecked() and self._loaded_files:
+            self._loaded_files.extend(results)
+        else:
+            self._loaded_files = list(results)
+        merged = self._merge_loaded_files()
+
+        self._status_label.setText(f"  Rendering {merged.count:,} shots…")
+        QApplication.processEvents()
+
+        self._viewer.load_data(merged)
+        self._selection_pane.set_data(merged)
+
+        # Stripe region metadata
+        regions = []
+        for d, p in self._loaded_files:
+            h = d.header
+            regions.append({
+                "name": p.name,
+                "shots": d.count,
+                "originX": h.stripeOriginX,
+                "originY": h.stripeOriginY,
+                "width": h.stripeWidth,
+                "length": h.stripeLength,
+                "subFieldHeight": h.subFieldHeight,
+                "overlap": h.overlap,
+            })
+        self._viewer.set_stripe_regions(regions)
+
+        n = len(self._loaded_files)
+        self.setWindowTitle(f"Pass File Viewer — {n} files")
+        self._update_status_multi(merged)
 
     def _open_file(self, path: Path) -> None:
         # If a previous parse is still running, wait for it
@@ -866,11 +968,6 @@ class MainWindow(QMainWindow):
             n = len(self._loaded_files)
             self.setWindowTitle(f"Pass File Viewer — {n} files")
             self._update_status_multi(merged)
-
-        # Load next queued file if multi-select is in progress
-        if self._pending_open_paths:
-            next_path = self._pending_open_paths.pop(0)
-            self._open_file(next_path)
 
     def _on_kdtree_ready(self) -> None:
         """Called when the KD-tree is built — update status to show it's fully ready."""
