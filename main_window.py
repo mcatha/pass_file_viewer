@@ -113,6 +113,7 @@ class MainWindow(QMainWindow):
         self._parse_thread: QThread | None = None
         self._parse_worker: _ParseWorker | None = None
         self._loaded_files: list[tuple[PassData, Path]] = []
+        self._next_load_incremental: bool = False
         # ── status bar ──────────────────────────────────────────────
         self._status_label = QLabel("  No file loaded")
         self._status_label.setStyleSheet("color: #aaa;")
@@ -140,10 +141,9 @@ class MainWindow(QMainWindow):
         open_act.triggered.connect(self._on_open)
         file_menu.addAction(open_act)
 
-        self._incremental_act = QAction("&Incremental Open", self)
-        self._incremental_act.setCheckable(True)
-        self._incremental_act.setChecked(False)
-        file_menu.addAction(self._incremental_act)
+        incremental_open_act = QAction("&Add to View…", self)
+        incremental_open_act.triggered.connect(self._on_incremental_open)
+        file_menu.addAction(incremental_open_act)
 
         file_menu.addSeparator()
 
@@ -721,17 +721,51 @@ class MainWindow(QMainWindow):
         if not valid:
             return
 
-        # For multi-file selection, enable incremental mode so files merge
-        if len(valid) > 1:
-            self._incremental_act.setChecked(True)
-
         # Single file: use the fast single-file path
+        self._next_load_incremental = False
         if len(valid) == 1:
             self._open_file(valid[0])
             return
 
         # Multiple files: parse all at once, then render once
         self._open_files_batch(valid)
+
+    def _on_incremental_open(self) -> None:
+        """Open additional pass files and add them to the current view."""
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Add Pass File(s) to View",
+            "",
+            "Pass Files (*.pass);;All Files (*)",
+        )
+        if not paths:
+            return
+
+        valid: list[Path] = []
+        for p in paths:
+            pass_path = Path(p)
+            meta_path = pass_path.parent / (pass_path.name + ".meta")
+            if meta_path.is_file():
+                try:
+                    from pass_parser import parse_meta_file
+                    parse_meta_file(meta_path)
+                except Exception as exc:
+                    QMessageBox.warning(
+                        self,
+                        "Invalid Meta File",
+                        f"The meta file could not be read:\n{meta_path.name}\n\n{exc}",
+                    )
+                    continue
+            valid.append(pass_path)
+
+        if not valid:
+            return
+
+        self._next_load_incremental = True
+        if len(valid) == 1:
+            self._open_file(valid[0])
+        else:
+            self._open_files_batch(valid)
 
     def _on_toggle_lines(self, checked: bool) -> None:
         self._viewer.set_lines_visible(checked)
@@ -848,7 +882,8 @@ class MainWindow(QMainWindow):
             data.y = data.y.astype(np.float64) + oy
 
         # Merge into loaded files list
-        _incremental = self._incremental_act.isChecked() and bool(self._loaded_files)
+        _incremental = self._next_load_incremental and bool(self._loaded_files)
+        self._next_load_incremental = False
         if _incremental:
             self._loaded_files.extend(results)
         else:
@@ -930,7 +965,8 @@ class MainWindow(QMainWindow):
         data.y = data.y.astype(np.float64) + oy
 
         # Incremental merge or replace
-        _incremental = self._incremental_act.isChecked() and bool(self._loaded_files)
+        _incremental = self._next_load_incremental and bool(self._loaded_files)
+        self._next_load_incremental = False
         if _incremental:
             self._loaded_files.append((data, path))
             merged = self._merge_loaded_files()
