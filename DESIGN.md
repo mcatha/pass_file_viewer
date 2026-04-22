@@ -27,7 +27,7 @@ The piecewise alpha curves, priority-based decimation, minimum-size inflation, a
 | **Zoom-adaptive alpha** | Mode-specific alpha curves prevent blowout at wide zoom while keeping close-zoom overlap visible |
 | **Adjustable alpha curves** | Disc and Gaussian alpha curves exposed via per-mode slider submenus |
 | **FWHM slider** | Logarithmic slider (0.1–1000 nm/µs) controls shot size scaling in real time |
-| **Priority-based decimation** | Fixed per-shot priority with dwell bias; mode-specific density budgets |
+| **Priority-based decimation** | Fixed per-shot random priority; mode-specific density budgets |
 | **Interactive selection** | Single-click and rubber-band box selection with side-pane data table |
 | **Measurement ruler** | Shift+click ruler with perpendicular tick marks at 1-2-5 intervals |
 | **Shot connections** | Toggle-able lines between consecutive shots |
@@ -307,7 +307,7 @@ Decimation runs on every camera change (100 ms debounce timer). The same code pa
 1. **Viewport cull**: AABB mask keeps only shots inside the visible area + 5 % margin + half the largest disc diameter. Viewport bounds are rotation-aware (4-corner screen → data mapping).
 2. **Density-based budget**: the occupied screen area is estimated from `min(data_extent, viewport_extent)` per axis, converted to pixels via `dpp`. Budget = `screen_px × shots_per_px`, capped at the mode's hard cap. No floor — when the data covers only a few pixels, very few shots are rendered.
 3. **Stride**: `stride = max(1, n_visible / budget)`. When stride ≤ 1, all visible shots are drawn.
-4. **Priority-based selection**: each shot is assigned a fixed random priority at load time, with a mild dwell bias (15 %): higher-dwell shots get lower priority values (more likely to survive decimation). The top `budget` shots by priority are selected via `np.argpartition` (O(n)). A full `np.argsort` of priorities is computed on a background `QThread` after load; once ready, the all-visible fast path slices it in O(1) instead of calling `argpartition`.
+4. **Priority-based selection**: each shot is assigned a fixed random priority at load time. The top `budget` shots by priority are selected via `np.argpartition` (O(n)). A full `np.argsort` of priorities is computed on a background `QThread` after load; once ready, the all-visible fast path slices it in O(1) instead of calling `argpartition`.
 5. **Cache gating**: a composite key of quantised viewport bounds + stride + `round(log₂(dpp) × 20)` prevents redundant GPU uploads when the view hasn't meaningfully changed.
 6. **All visuals synced**: the same decimated index set is uploaded to all active marker layers.
 
@@ -316,7 +316,6 @@ Decimation runs on every camera change (100 ms debounce timer). The same code pa
 - **Stable across pan/zoom**: fixed per-shot priorities mean the same shots survive decimation regardless of small viewport shifts — no visible flicker.
 - **No rotation artefacts**: viewport bounds use 4-corner mapping; `dpp` is computed from the full transform chain via Euclidean distance, not just the X component.
 - **No blowout**: density-based budget limits on-screen overlap count; hard cap prevents GPU overload.
-- **Importance-aware**: dwell bias keeps larger exposures visible preferentially.
 
 ---
 
@@ -724,5 +723,5 @@ pass_viewer/
 | **Additive blending** | OpenGL blend mode where source colour is added to framebuffer (`src_alpha, one`) |
 | **Alpha blending** | Standard transparency blend that converges to source colour (`src_alpha, one_minus_src_alpha`) |
 | **dpp** | Data units per pixel — the true zoom scale, computed from the full vispy transform chain via Euclidean distance (rotation-invariant) |
-| **Priority** | Fixed per-shot random rank (biased by dwell) that determines decimation survival order |
+| **Priority** | Fixed per-shot random rank that determines decimation survival order |
 | **Mesa llvmpipe** | Software OpenGL implementation bundled as `opengl32sw.dll`; used when no GPU is available |
