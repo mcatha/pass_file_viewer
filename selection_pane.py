@@ -8,7 +8,7 @@ in tab-separated format suitable for pasting into spreadsheets.
 from __future__ import annotations
 
 import numpy as np
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, QObject, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QAction
 from PyQt6.QtWidgets import (
     QWidget,
@@ -25,6 +25,22 @@ from PyQt6.QtWidgets import (
 from pass_parser import PassData
 
 
+class _SortWorker(QObject):
+    """Sorts an index array on a background thread."""
+    finished = pyqtSignal(object)  # emits sorted np.ndarray (np.intp)
+
+    def __init__(self, indices) -> None:
+        super().__init__()
+        self._indices = indices
+
+    def run(self) -> None:
+        if isinstance(self._indices, np.ndarray):
+            result = np.sort(self._indices).astype(np.intp)
+        else:
+            result = np.array(sorted(self._indices), dtype=np.intp)
+        self.finished.emit(result)
+
+
 class _ShotTableModel(QAbstractTableModel):
     """Virtual table model — only formats data for rows Qt actually renders."""
 
@@ -35,15 +51,15 @@ class _ShotTableModel(QAbstractTableModel):
         self._indices: np.ndarray = np.empty(0, dtype=np.intp)  # sorted shot indices
         self._data: PassData | None = None
 
-    def set_selection(self, data: PassData | None, indices) -> None:
+    def set_sorted(self, data: PassData | None, indices: np.ndarray) -> None:
         self.beginResetModel()
         self._data = data
-        if isinstance(indices, np.ndarray):
-            self._indices = np.sort(indices).astype(np.intp)
-        elif indices:
-            self._indices = np.array(sorted(indices), dtype=np.intp)
-        else:
-            self._indices = np.empty(0, dtype=np.intp)
+        self._indices = indices
+        self.endResetModel()
+
+    def clear(self) -> None:
+        self.beginResetModel()
+        self._indices = np.empty(0, dtype=np.intp)
         self.endResetModel()
 
     # ── QAbstractTableModel interface ──
@@ -131,6 +147,9 @@ class SelectionPane(QWidget):
         self.addAction(copy_act)
 
         self._data: PassData | None = None
+        self._sort_thread: QThread | None = None
+        self._sort_worker: _SortWorker | None = None
+        self._pending_count: int = 0
 
     def set_data(self, data: PassData) -> None:
         """Store reference to the loaded pass data."""
@@ -138,9 +157,32 @@ class SelectionPane(QWidget):
 
     def update_selection(self, indices: list[int]) -> None:
         """Populate the table with the given shot indices (0-based), sorted by shot number."""
-        self._model.set_selection(self._data, indices)
         total = len(indices)
-        self._header_label.setText(f"Selection  ({total:,} shots)")
+        self._pending_count = total
+        self._header_label.setText(f"Selection  ({total:,} shots)  —  loading…")
+        self._model.clear()
+        if self._sort_worker is not None:
+            self._sort_worker.finished.disconnect(self._on_sort_ready)
+            self._sort_thread.quit()
+        thread = QThread(self)
+        worker = _SortWorker(indices)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_sort_ready)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_sort_thread_done)
+        self._sort_thread = thread
+        self._sort_worker = worker
+        thread.start()
+
+    def _on_sort_ready(self, sorted_indices: np.ndarray) -> None:
+        self._model.set_sorted(self._data, sorted_indices)
+        self._header_label.setText(f"Selection  ({self._pending_count:,} shots)")
+
+    def _on_sort_thread_done(self) -> None:
+        self._sort_thread = None
+        self._sort_worker = None
 
     # ── clipboard helpers ───────────────────────────────────────────
 

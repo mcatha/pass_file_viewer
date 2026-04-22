@@ -12,7 +12,7 @@ import math as _math
 import numpy as np
 from PyQt6.QtCore import Qt, QPoint, QPointF, QRectF, QTimer, QThread, QObject, pyqtSignal
 from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPolygonF
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt6.QtWidgets import QApplication, QWidget, QVBoxLayout, QLabel
 
 from scipy.spatial import cKDTree
 import vispy
@@ -44,6 +44,7 @@ _MIN_BOX_SEL_PX = 4  # minimum box-selection marker size in screen pixels
 _RUBBER_BAND_PEN = QColor(100, 200, 255, 200)
 _RUBBER_BAND_FILL = QColor(100, 200, 255, 40)
 _BG_COLOR = "#1e1e1e"
+_BOX_SEL_VIEWPORT_CULL_MAX = 1_000_000  # above this, skip per-frame viewport cull
 
 # Unit circle for wafer outline (257 points → 256 segments, closed)
 _theta = np.linspace(0, 2 * np.pi, 257)
@@ -141,6 +142,37 @@ class _ArgsortWorker(QObject):
     def run(self) -> None:
         result = np.argsort(self._priority).astype(np.intp)
         self.finished.emit(result)
+
+
+class _BoxSelWorker(QObject):
+    """Runs AABB + convex-quad geometry test on a background thread."""
+    finished = pyqtSignal(object)  # emits np.ndarray of matching indices (np.intp)
+
+    def __init__(self, positions: np.ndarray, quad: np.ndarray) -> None:
+        super().__init__()
+        self._positions = positions
+        self._quad = quad
+
+    def run(self) -> None:
+        quad = self._quad
+        pos = self._positions
+        qx_min, qx_max = quad[:, 0].min(), quad[:, 0].max()
+        qy_min, qy_max = quad[:, 1].min(), quad[:, 1].max()
+        aabb_mask = ((pos[:, 0] >= qx_min) & (pos[:, 0] <= qx_max) &
+                     (pos[:, 1] >= qy_min) & (pos[:, 1] <= qy_max))
+        candidates = np.nonzero(aabb_mask)[0]
+        p = pos[candidates]
+
+        def _edge_sign(a, b, pts):
+            return (b[0] - a[0]) * (pts[:, 1] - a[1]) - (b[1] - a[1]) * (pts[:, 0] - a[0])
+
+        s0 = _edge_sign(quad[0], quad[1], p)
+        s1 = _edge_sign(quad[1], quad[2], p)
+        s2 = _edge_sign(quad[2], quad[3], p)
+        s3 = _edge_sign(quad[3], quad[0], p)
+        mask = ((s0 >= 0) & (s1 >= 0) & (s2 >= 0) & (s3 >= 0)) | \
+               ((s0 <= 0) & (s1 <= 0) & (s2 <= 0) & (s3 <= 0))
+        self.finished.emit(candidates[mask].astype(np.intp))
 
 
 class _RubberBandOverlay(QWidget):
@@ -591,6 +623,8 @@ class ShotViewerWidget(QWidget):
         self._kdtree_thread: QThread | None = None
         self._argsort_thread: QThread | None = None
         self._argsort_worker: _ArgsortWorker | None = None
+        self._box_sel_thread: QThread | None = None
+        self._box_sel_worker: _BoxSelWorker | None = None
         self._priority_sorted: np.ndarray | None = None
         self._rendered_indices: np.ndarray | None = None
         self._rotation_deg: float = 0.0
@@ -915,6 +949,14 @@ class ShotViewerWidget(QWidget):
         """Called when the argsort thread has fully stopped."""
         self._argsort_thread = None
         self._argsort_worker = None
+
+    def _on_box_sel_ready(self, indices: np.ndarray) -> None:
+        QApplication.restoreOverrideCursor()
+        self._apply_box_selection(indices)
+
+    def _on_box_sel_thread_done(self) -> None:
+        self._box_sel_thread = None
+        self._box_sel_worker = None
 
     def set_lines_visible(self, visible: bool) -> None:
         """Toggle shot connection lines."""
@@ -2058,14 +2100,12 @@ class ShotViewerWidget(QWidget):
                 self._handle_click_select(event)
                 return
 
-            # Box selection: map all 4 screen-space corners of the
-            # rubber-band rectangle to data space so the selection
-            # region stays correct even when the view is rotated.
+            # Box selection: map rubber-band corners to data space, then run
+            # geometry test on a background thread to avoid blocking the UI.
             if self._positions is None:
                 return
             try:
                 tr = self._canvas.scene.node_transform(self._visual_root)
-                # Screen-space corners of the drawn rectangle
                 corners_px = [
                     [sx, sy, 0, 1],
                     [ex, sy, 0, 1],
@@ -2079,40 +2119,21 @@ class ShotViewerWidget(QWidget):
             except Exception:
                 return
 
-            # Fast AABB pre-filter: only test points inside the quad's
-            # bounding box.  For a zoomed-in view on a 45M-shot file,
-            # this reduces the candidate set from millions to thousands.
-            qx_min, qx_max = quad[:, 0].min(), quad[:, 0].max()
-            qy_min, qy_max = quad[:, 1].min(), quad[:, 1].max()
-            all_pos = self._positions
-            aabb_mask = (
-                (all_pos[:, 0] >= qx_min) & (all_pos[:, 0] <= qx_max)
-                & (all_pos[:, 1] >= qy_min) & (all_pos[:, 1] <= qy_max)
-            )
-            candidates = np.nonzero(aabb_mask)[0]
-            pos = all_pos[candidates]
-
-            # Point-in-convex-quadrilateral test using cross-product
-            # signs.  A point is inside the quad when it is on the
-            # same side of every directed edge.
-            def _edge_sign(a, b, pts):
-                """Return sign of cross(AB, AP) for each point P."""
-                return (b[0] - a[0]) * (pts[:, 1] - a[1]) - \
-                       (b[1] - a[1]) * (pts[:, 0] - a[0])
-
-            s0 = _edge_sign(quad[0], quad[1], pos)
-            s1 = _edge_sign(quad[1], quad[2], pos)
-            s2 = _edge_sign(quad[2], quad[3], pos)
-            s3 = _edge_sign(quad[3], quad[0], pos)
-
-            # All same sign (or zero) → inside
-            mask = (
-                ((s0 >= 0) & (s1 >= 0) & (s2 >= 0) & (s3 >= 0))
-                | ((s0 <= 0) & (s1 <= 0) & (s2 <= 0) & (s3 <= 0))
-            )
-            indices = candidates[mask].astype(np.intp)
-
-            self._apply_box_selection(indices)
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            if self._box_sel_worker is not None:
+                self._box_sel_worker.finished.disconnect(self._on_box_sel_ready)
+                self._box_sel_thread.quit()
+            thread = QThread(self)
+            worker = _BoxSelWorker(self._positions, quad)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.finished.connect(self._on_box_sel_ready)
+            worker.finished.connect(thread.quit)
+            thread.finished.connect(worker.deleteLater)
+            thread.finished.connect(self._on_box_sel_thread_done)
+            self._box_sel_thread = thread
+            self._box_sel_worker = worker
+            thread.start()
             event.handled = True
 
     def _handle_click_select(self, event) -> None:
@@ -2205,22 +2226,32 @@ class ShotViewerWidget(QWidget):
         idx_arr = self._box_selected_indices
         if len(idx_arr) == 0 or self._positions is None:
             return
-        # Viewport-cull: only upload markers for selected shots currently on screen
-        bounds = self._get_viewport_bounds()
-        if bounds is not None:
-            xmin, xmax, ymin, ymax = bounds
-            mx = (xmax - xmin) * 0.05
-            my = (ymax - ymin) * 0.05
-            sel_pos = self._positions[idx_arr]
-            vis = ((sel_pos[:, 0] >= xmin - mx) & (sel_pos[:, 0] <= xmax + mx) &
-                   (sel_pos[:, 1] >= ymin - my) & (sel_pos[:, 1] <= ymax + my))
-            idx_arr = idx_arr[vis]
-        if len(idx_arr) == 0:
-            self._box_sel_markers.set_data(np.empty((0, 2)))
-            return
-        # Stride so we never upload more than ~500k markers
+
+        if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX:
+            # Small selection: viewport-cull so we only upload on-screen markers
+            bounds = self._get_viewport_bounds()
+            if bounds is not None:
+                xmin, xmax, ymin, ymax = bounds
+                mx = (xmax - xmin) * 0.05
+                my = (ymax - ymin) * 0.05
+                sel_pos = self._positions[idx_arr]
+                vis = ((sel_pos[:, 0] >= xmin - mx) & (sel_pos[:, 0] <= xmax + mx) &
+                       (sel_pos[:, 1] >= ymin - my) & (sel_pos[:, 1] <= ymax + my))
+                idx_arr = idx_arr[vis]
+            if len(idx_arr) == 0:
+                self._box_sel_markers.set_data(np.empty((0, 2)))
+                return
+
+        # Stride to cap GPU upload at ~500k markers
         stride = max(1, len(idx_arr) // 500_000)
         sub = idx_arr[::stride]
+
+        # Skip re-upload if the selection and stride haven't changed
+        cache_key = (id(self._box_selected_indices), stride)
+        if cache_key == getattr(self, '_box_sel_cache_key', None):
+            return
+        self._box_sel_cache_key = cache_key
+
         box_sz = self._uniform_size if self._uniform_size is not None else self._sizes[sub]
         self._box_sel_markers.set_data(
             self._positions[sub],
@@ -2241,6 +2272,7 @@ class ShotViewerWidget(QWidget):
 
         self._box_sel_markers.visible = False
         self._box_selected_indices = indices
+        self._box_sel_cache_key = None
 
         if len(indices) and self._positions is not None:
             self._upload_box_sel_markers()

@@ -341,7 +341,7 @@ Extends vispy's `PanZoomCamera`:
 |------|--------|-----------|
 | **Hover** | Floating tooltip | KD-tree `query_ball_point` lookup with radius = `max(max_marker_radius, 5 px in data units)`. Shows shot #, X, Y, dwell. Hidden automatically on click selection. |
 | **Click** | Gold overlay marker + tooltip | Select/deselect single shot; highlight connection lines. Mode-aware hit radius: disc uses `size × _DISC_SIZE_SCALE / 2`, Gaussian uses `size / 2`. |
-| **Box** | Green overlay markers + side pane | Rubber-band selection mapped through rotation transform; cross-product point-in-quad test |
+| **Box** | Green overlay markers + side pane | Rubber-band selection mapped through rotation transform; AABB pre-filter then cross-product point-in-quad test run on a background `QThread`; wait cursor shown during computation. Side pane sorts indices on a second background thread with a "loading…" indicator. |
 
 The KD-tree is built asynchronously on a background `QThread` on the currently rendered (decimated) subset, not the full dataset. It is rebuilt each time the decimated set changes (100 ms debounced camera event). Because the rendered set is always ≤ 2M shots, the KD-tree stays small regardless of file size. The returned hit index is remapped through `_rendered_indices` to recover the original data array index. Hover is momentarily unavailable during each rebuild window.
 
@@ -635,6 +635,9 @@ The `pass_viewer/` directory is a Git repository with remote at `https://github.
 | Viewport cull | AABB mask before decimation | Only process visible shots |
 | Connection lines | Decimated line segments (max 500K) | Avoids GPU overload |
 | Priority sort | `np.argsort` deferred to background `QThread`; `np.argpartition` O(n) fallback | Main thread unblocked at load |
+| Box selection geometry | AABB pre-filter + quad edge test on background `QThread` | Main thread unblocked during large selections |
+| Box selection marker upload | Viewport cull skipped for selections >1M; cache key prevents redundant GPU uploads per frame | Pan/zoom stays smooth with large selections active |
+| Selection pane sort | `np.sort` on background `QThread`; "loading…" indicator shown immediately | Main thread unblocked for large sorted panes |
 | Hover lookup | Throttled to 60 fps via 16 ms timer | No redundant KD-tree queries |
 
 ---
