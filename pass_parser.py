@@ -162,7 +162,7 @@ def _read_records(raw, offset: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndar
     # Read as uint64 — .copy() detaches from any mmap
     raw64 = np.frombuffer(
         raw, dtype=np.dtype("<u8"), count=n_records, offset=offset,
-    ).copy()
+    )
 
     # Bitfield extraction via 64-bit arithmetic:
     #   bits  0- 1: mID      (2 bits)

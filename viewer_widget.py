@@ -130,6 +130,19 @@ class _KDTreeWorker(QObject):
         self.finished.emit(tree)
 
 
+class _ArgsortWorker(QObject):
+    """Computes np.argsort on a priority array on a background thread."""
+    finished = pyqtSignal(object)  # emits sorted index array (np.intp)
+
+    def __init__(self, priority: np.ndarray) -> None:
+        super().__init__()
+        self._priority = priority
+
+    def run(self) -> None:
+        result = np.argsort(self._priority).astype(np.intp)
+        self.finished.emit(result)
+
+
 class _RubberBandOverlay(QWidget):
     """Transparent overlay that draws the rubber-band selection rectangle."""
 
@@ -485,7 +498,7 @@ class ShotViewerWidget(QWidget):
         self._wafer_diameter_nm: float | None = None
         self._wafer_outline = visuals.Line(
             pos=np.zeros((2, 2), dtype=np.float64),
-            color=_AXIS_COLOR, width=1, connect='strip',
+            color=(1.0, 0.2, 0.2, 0.9), width=1, connect='strip',
             parent=self._visual_root,
         )
         self._wafer_outline.visible = False
@@ -576,6 +589,10 @@ class ShotViewerWidget(QWidget):
         self._sizes: np.ndarray | None = None
         self._kdtree: cKDTree | None = None
         self._kdtree_thread: QThread | None = None
+        self._argsort_thread: QThread | None = None
+        self._argsort_worker: _ArgsortWorker | None = None
+        self._priority_sorted: np.ndarray | None = None
+        self._rendered_indices: np.ndarray | None = None
         self._rotation_deg: float = 0.0
         self._selected_idx: int | None = None       # currently selected shot index
         self._box_selected_indices: np.ndarray = np.empty(0, dtype=np.intp)  # box-selected shot indices
@@ -684,6 +701,7 @@ class ShotViewerWidget(QWidget):
         raw_pos = np.column_stack((data.x, data.y))
         self._origin = raw_pos.mean(axis=0).astype(np.float64)
         self._positions = (raw_pos - self._origin).astype(np.float32)
+        del raw_pos
         _t1 = _time.perf_counter()
 
         # Diameter in data units (nm): FWHM = dwell_ns * _NM_PER_NS_DWELL * _fwhm_scale
@@ -720,9 +738,23 @@ class ShotViewerWidget(QWidget):
             priority *= (1.0 - _DWELL_WEIGHT * dwell_norm)
 
         self._shot_priority = priority
-        # Pre-sort indices by priority so the all-visible decimation path
-        # can just slice instead of running argpartition every frame.
-        self._priority_sorted = np.argsort(priority).astype(np.intp)
+        # Sort deferred to background thread — main thread stays responsive.
+        # _priority_indices falls back to argpartition until it's ready.
+        self._priority_sorted = None
+        if self._argsort_thread is not None:
+            self._argsort_thread.quit()
+            self._argsort_thread.wait()
+        argsort_thread = QThread(self)
+        argsort_worker = _ArgsortWorker(priority)
+        argsort_worker.moveToThread(argsort_thread)
+        argsort_thread.started.connect(argsort_worker.run)
+        argsort_worker.finished.connect(self._on_argsort_ready)
+        argsort_worker.finished.connect(argsort_thread.quit)
+        argsort_thread.finished.connect(argsort_worker.deleteLater)
+        argsort_thread.finished.connect(self._on_argsort_thread_done)
+        self._argsort_thread = argsort_thread
+        self._argsort_worker = argsort_worker
+        argsort_thread.start()
         # Cache data bounding box for density calculations and viewport cull fast-path
         dmin = self._positions.min(axis=0)
         dmax = self._positions.max(axis=0)
@@ -747,9 +779,6 @@ class ShotViewerWidget(QWidget):
         if self._lines.visible:
             self._lines.set_data(self._positions, color=_LINE_COLOR, width=1)
             self._lines_data_set = True
-
-        # Build KD-tree in background thread so the UI stays responsive
-        self._build_kdtree_async(self._positions)
 
         # Reposition origin marker and axis lines in centroid-shifted space
         orig_c = -self._origin.astype(np.float64)
@@ -877,6 +906,15 @@ class ShotViewerWidget(QWidget):
         """Called when the KD-tree thread has fully stopped."""
         self._kdtree_thread = None
         self._kdtree_worker = None
+
+    def _on_argsort_ready(self, result: np.ndarray) -> None:
+        """Called when background argsort completes."""
+        self._priority_sorted = result
+
+    def _on_argsort_thread_done(self) -> None:
+        """Called when the argsort thread has fully stopped."""
+        self._argsort_thread = None
+        self._argsort_worker = None
 
     def set_lines_visible(self, visible: bool) -> None:
         """Toggle shot connection lines."""
@@ -1260,7 +1298,10 @@ class ShotViewerWidget(QWidget):
         count = max(1, int(n_vis / stride))
         if vis_idx is None:
             # All points visible — slice the pre-sorted priority order (O(1))
-            return self._priority_sorted[:count]
+            # when ready; fall back to argpartition while background sort runs.
+            if self._priority_sorted is not None:
+                return self._priority_sorted[:count]
+            return np.argpartition(self._shot_priority, count)[:count]
         priorities = self._shot_priority[vis_idx]
         top_k = np.argpartition(priorities, count)[:count]
         return vis_idx[top_k]
@@ -1288,9 +1329,11 @@ class ShotViewerWidget(QWidget):
         idx = self._priority_indices(None, n, stride)
         dpos = pos[idx]
         self._uploaded_positions = dpos
+        self._rendered_indices = idx
         dsizes = self._uniform_size if self._uniform_size is not None else self._all_sizes[idx]
         self._uploaded_sizes = dsizes
         self._upload_view(dpos, dsizes, stride=stride)
+        self._build_kdtree_async(dpos)
         self._shot_count_label.setText(f"{len(dpos):,} / {n:,} shots")
         self._shot_count_label.adjustSize()
         self._shot_count_label.setVisible(True)
@@ -1497,12 +1540,14 @@ class ShotViewerWidget(QWidget):
             else:
                 print(f"[upload] rendered=0")
             self._uploaded_positions = dpos
+            self._rendered_indices = idx
             if self._uniform_size is not None:
                 dsizes = self._uniform_size
             else:
                 dsizes = self._all_sizes[idx]
             self._uploaded_sizes = dsizes
             self._upload_view(dpos, dsizes, dpp, stride)
+            self._build_kdtree_async(dpos)
 
         # Always update status label
         rendered = len(getattr(self, '_uploaded_positions', []))
@@ -1827,10 +1872,12 @@ class ShotViewerWidget(QWidget):
         for o in order:
             i = idxs[o]
             d = dists[o]
-            sz = self._uniform_size if self._uniform_size is not None else self._sizes[i]
+            # Remap from decimated-subset index to original data index
+            orig_i = int(self._rendered_indices[i]) if self._rendered_indices is not None else int(i)
+            sz = self._uniform_size if self._uniform_size is not None else self._sizes[orig_i]
             r = sz * scale / 2.0
             if d <= max(r, min_radius_data):
-                return int(i)
+                return orig_i
 
         return None
 

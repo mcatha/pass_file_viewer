@@ -21,7 +21,7 @@ The piecewise alpha curves, priority-based decimation, minimum-size inflation, a
 
 | Feature | Description |
 |---------|-------------|
-| **High-performance rendering** | Instanced OpenGL markers via vispy; handles 10 M+ shots at 60 fps |
+| **High-performance rendering** | Instanced OpenGL markers via vispy; loads 10 M+ shot files; renders up to 2 M shots per frame via priority-based decimation |
 | **Disc markers (default)** | Hard-edged discs with additive white overlap layer for brightening toward white |
 | **Gaussian PSF markers** | Custom fragment shader renders each shot as a smooth Gaussian with FWHM = shot size |
 | **Zoom-adaptive alpha** | Mode-specific alpha curves prevent blowout at wide zoom while keeping close-zoom overlap visible |
@@ -307,7 +307,7 @@ Decimation runs on every camera change (100 ms debounce timer). The same code pa
 1. **Viewport cull**: AABB mask keeps only shots inside the visible area + 5 % margin + half the largest disc diameter. Viewport bounds are rotation-aware (4-corner screen → data mapping).
 2. **Density-based budget**: the occupied screen area is estimated from `min(data_extent, viewport_extent)` per axis, converted to pixels via `dpp`. Budget = `screen_px × shots_per_px`, capped at the mode's hard cap. No floor — when the data covers only a few pixels, very few shots are rendered.
 3. **Stride**: `stride = max(1, n_visible / budget)`. When stride ≤ 1, all visible shots are drawn.
-4. **Priority-based selection**: each shot is assigned a fixed random priority at load time, with a mild dwell bias (15 %): higher-dwell shots get lower priority values (more likely to survive decimation). The top `budget` shots by priority are selected via `np.argpartition` (O(n)).
+4. **Priority-based selection**: each shot is assigned a fixed random priority at load time, with a mild dwell bias (15 %): higher-dwell shots get lower priority values (more likely to survive decimation). The top `budget` shots by priority are selected via `np.argpartition` (O(n)). A full `np.argsort` of priorities is computed on a background `QThread` after load; once ready, the all-visible fast path slices it in O(1) instead of calling `argpartition`.
 5. **Cache gating**: a composite key of quantised viewport bounds + stride + `round(log₂(dpp) × 20)` prevents redundant GPU uploads when the view hasn't meaningfully changed.
 6. **All visuals synced**: the same decimated index set is uploaded to all active marker layers.
 
@@ -344,7 +344,7 @@ Extends vispy's `PanZoomCamera`:
 | **Click** | Gold overlay marker + tooltip | Select/deselect single shot; highlight connection lines. Mode-aware hit radius: disc uses `size × _DISC_SIZE_SCALE / 2`, Gaussian uses `size / 2`. |
 | **Box** | Green overlay markers + side pane | Rubber-band selection mapped through rotation transform; cross-product point-in-quad test |
 
-The KD-tree is built asynchronously on a background `QThread` to avoid blocking the UI during load.
+The KD-tree is built asynchronously on a background `QThread` on the currently rendered (decimated) subset, not the full dataset. It is rebuilt each time the decimated set changes (100 ms debounced camera event). Because the rendered set is always ≤ 2M shots, the KD-tree stays small regardless of file size. The returned hit index is remapped through `_rendered_indices` to recover the original data array index. Hover is momentarily unavailable during each rebuild window.
 
 ### Selection marker sizing
 
@@ -518,7 +518,7 @@ Fields: total shots in file, visible (viewport-culled), active stride, rendered 
 
 ### Wafer outline
 
-**View → Wafer Outline** provides a submenu of standard wafer diameters: None, 2" (51 mm), 4" (100 mm), 5" (125 mm), 6" (150 mm), 8" (200 mm), 12" (300 mm), 18" (450 mm). Selecting a size draws a circle of that diameter centered on the wafer origin (0, 0 in absolute coordinates). The circle uses a 256-segment `visuals.Line` with the same axis color `(0.6, 0.6, 0.6, 0.8)`. The outline repositions automatically when new data is loaded (since the centroid shift changes). Selecting "None" hides the circle.
+**View → Wafer Outline** provides a submenu of standard wafer diameters: None, 2" (51 mm), 4" (100 mm), 5" (125 mm), 6" (150 mm), 8" (200 mm), 12" (300 mm), 18" (450 mm). Selecting a size draws a circle of that diameter centered on the wafer origin (0, 0 in absolute coordinates). The circle uses a 256-segment `visuals.Line` with colour `(1.0, 0.2, 0.2, 0.9)` (red). The outline repositions automatically when new data is loaded (since the centroid shift changes). Selecting "None" hides the circle.
 
 ### Stripe region hover
 
@@ -617,19 +617,23 @@ Single-file windowed exe. Key configuration:
 
 **Windows version info**: loaded from `version_info.txt` — v1.2.0.0, "Pass File Viewer", © 2026 Multibeam Corporation.
 
+### Version control
+
+The `pass_viewer/` directory is a Git repository with remote at `https://github.com/mcatha/pass_file_viewer.git`. The parent directory (`Pass files/`) is not under version control — only the source files inside `pass_viewer/` are tracked.
+
 ---
 
 ## 11. Performance Characteristics
 
 | Operation | Technique | Impact |
 |-----------|-----------|--------|
-| File parsing | mmap + numpy 64-bit vectorised bitfields | ~2 s for 10M shots |
-| KD-tree build | Background QThread | Non-blocking UI |
+| File parsing | mmap + numpy 64-bit vectorised bitfields (no intermediate copy) | ~2 s for 10M shots |
+| KD-tree build | Background QThread on decimated subset (≤ 2M shots); rebuilt per decimation update | Small and fast; scales to any file size |
 | GPU upload | Uniform colour scalar (not per-point array); scalar size when dwells identical | Saves N×16+ bytes |
 | Zoom-out | Priority-based decimation + 2M hard cap | Keeps rendered count ≤ 2M |
 | Viewport cull | AABB mask before decimation | Only process visible shots |
 | Connection lines | Decimated line segments (max 500K) | Avoids GPU overload |
-| Priority select | `np.argpartition` (O(n)) | No full sort needed |
+| Priority sort | `np.argsort` deferred to background `QThread`; `np.argpartition` O(n) fallback | Main thread unblocked at load |
 | Hover lookup | Throttled to 60 fps via 16 ms timer | No redundant KD-tree queries |
 
 ---
