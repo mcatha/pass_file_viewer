@@ -120,15 +120,16 @@ class _RightPanCamera(scene.PanZoomCamera):
 
 class _KDTreeWorker(QObject):
     """Builds a cKDTree on a background thread."""
-    finished = pyqtSignal(object)  # emits the cKDTree
+    finished = pyqtSignal(object)  # emits (cKDTree, rendered_indices)
 
-    def __init__(self, positions: np.ndarray) -> None:
+    def __init__(self, positions: np.ndarray, rendered_indices: np.ndarray | None) -> None:
         super().__init__()
         self._positions = positions
+        self._rendered_indices = rendered_indices
 
     def run(self) -> None:
         tree = cKDTree(self._positions)
-        self.finished.emit(tree)
+        self.finished.emit((tree, self._rendered_indices))
 
 
 class _ArgsortWorker(QObject):
@@ -620,6 +621,7 @@ class ShotViewerWidget(QWidget):
         self._origin: np.ndarray = np.zeros(2, dtype=np.float64)  # centroid offset
         self._sizes: np.ndarray | None = None
         self._kdtree: cKDTree | None = None
+        self._kdtree_indices: np.ndarray | None = None
         self._kdtree_thread: QThread | None = None
         self._argsort_thread: QThread | None = None
         self._argsort_worker: _ArgsortWorker | None = None
@@ -911,15 +913,16 @@ class ShotViewerWidget(QWidget):
         self._wafer_outline.set_data(pts.astype(np.float64))
         self._wafer_outline.visible = True
 
-    def _build_kdtree_async(self, positions: np.ndarray) -> None:
+    def _build_kdtree_async(self, positions: np.ndarray, rendered_indices: np.ndarray | None) -> None:
         """Build the KD-tree on a worker thread."""
         # Clean up any previous thread
         if self._kdtree_thread is not None:
             self._kdtree_thread.quit()
             self._kdtree_thread.wait()
         self._kdtree = None
+        self._kdtree_indices = None
         thread = QThread(self)  # parent prevents premature GC
-        worker = _KDTreeWorker(positions)
+        worker = _KDTreeWorker(positions, rendered_indices)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_kdtree_ready)
@@ -931,9 +934,11 @@ class ShotViewerWidget(QWidget):
         self._kdtree_worker = worker
         thread.start()
 
-    def _on_kdtree_ready(self, tree: cKDTree) -> None:
+    def _on_kdtree_ready(self, result) -> None:
         """Called when background KD-tree build completes."""
+        tree, rendered_indices = result
         self._kdtree = tree
+        self._kdtree_indices = rendered_indices
         self.kdtree_ready.emit()
 
     def _on_kdtree_thread_done(self) -> None:
@@ -1375,7 +1380,7 @@ class ShotViewerWidget(QWidget):
         dsizes = self._uniform_size if self._uniform_size is not None else self._all_sizes[idx]
         self._uploaded_sizes = dsizes
         self._upload_view(dpos, dsizes, stride=stride)
-        self._build_kdtree_async(dpos)
+        self._build_kdtree_async(dpos, idx)
         self._shot_count_label.setText(f"{len(dpos):,} / {n:,} shots")
         self._shot_count_label.adjustSize()
         self._shot_count_label.setVisible(True)
@@ -1589,7 +1594,7 @@ class ShotViewerWidget(QWidget):
                 dsizes = self._all_sizes[idx]
             self._uploaded_sizes = dsizes
             self._upload_view(dpos, dsizes, dpp, stride)
-            self._build_kdtree_async(dpos)
+            self._build_kdtree_async(dpos, idx)
 
         # Always update status label
         rendered = len(getattr(self, '_uploaded_positions', []))
@@ -1915,7 +1920,7 @@ class ShotViewerWidget(QWidget):
             i = idxs[o]
             d = dists[o]
             # Remap from decimated-subset index to original data index
-            orig_i = int(self._rendered_indices[i]) if self._rendered_indices is not None else int(i)
+            orig_i = int(self._kdtree_indices[i]) if self._kdtree_indices is not None else int(i)
             sz = self._uniform_size if self._uniform_size is not None else self._sizes[orig_i]
             r = sz * scale / 2.0
             if d <= max(r, min_radius_data):
