@@ -732,27 +732,18 @@ class ShotViewerWidget(QWidget):
         self._all_sizes = self._sizes
         self._max_shot_size = float(np.max(self._sizes)) if not np.isscalar(self._sizes) else float(self._sizes)
         # ─── Fixed per-shot priority (computed once at load time) ────────
-        # Base = uniform random → perfectly proportional decimation.
-        # Dwell bias: bigger dwell → priority scaled DOWN by up to 15%
-        #   (more likely to survive decimation).
+        # Uniform random → perfectly proportional decimation across all shots.
         n_shots = len(self._positions)
         rng = np.random.default_rng(seed=42)
         priority = rng.random(n_shots).astype(np.float32)          # [0, 1)
-
-        # Dwell bias: scale down priorities for bigger-dwell shots
-        _DWELL_WEIGHT = 0.15                                       # max 15% reduction
-        dwell_range = dmax_sz - dmin_sz
-        if dwell_range > 0:
-            dwell_norm = ((dwell_sizes - dmin_sz) / dwell_range).astype(np.float32)
-            priority *= (1.0 - _DWELL_WEIGHT * dwell_norm)
 
         self._shot_priority = priority
         # Sort deferred to background thread — main thread stays responsive.
         # _priority_indices falls back to argpartition until it's ready.
         self._priority_sorted = None
-        if self._argsort_thread is not None:
+        if self._argsort_worker is not None:
+            self._argsort_worker.finished.disconnect(self._on_argsort_ready)
             self._argsort_thread.quit()
-            self._argsort_thread.wait()
         argsort_thread = QThread(self)
         argsort_worker = _ArgsortWorker(priority)
         argsort_worker.moveToThread(argsort_thread)
