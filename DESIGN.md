@@ -396,7 +396,7 @@ Rotation is applied as a `MatrixTransform` on a parent `Node` that holds all vis
 ```
 File
 ├── Open Pass File… (Ctrl+O)
-├── Add to View… (add files to current view)
+├── Incremental Open… (add files to current view)
 └── Exit (Alt+F4)
 
 View
@@ -459,7 +459,7 @@ After parsing, the stripe origin from the `.pass.meta` header (`stripeOriginX`, 
 
 ### Incremental open
 
-**File → Add to View…** opens a separate file dialog whose selected files are appended to the current view instead of replacing it. Each file's shots are independently offset by their stripe origin, so shots from different stripes align in wafer coordinates. The status bar shows the number of loaded files, total shot count, and combined file size. Opening via the normal **File → Open…** always replaces all loaded data.
+**File → Incremental Open…** opens a separate file dialog whose selected files are appended to the current view instead of replacing it. Each file's shots are independently offset by their stripe origin, so shots from different stripes align in wafer coordinates. The status bar shows the number of loaded files, total shot count, and combined file size. Opening via the normal **File → Open…** always replaces all loaded data.
 
 When adding files incrementally, `load_data` is called with `keep_origin=True` so the existing centroid is preserved. Without this, each incremental load recomputes the centroid from all shots, shifting all GPU-side positions — the camera stays fixed in centroid-relative space, so the entire scene drifts and the newly added file's shots land off-screen.
 

@@ -141,7 +141,7 @@ class MainWindow(QMainWindow):
         open_act.triggered.connect(self._on_open)
         file_menu.addAction(open_act)
 
-        incremental_open_act = QAction("&Add to View…", self)
+        incremental_open_act = QAction("&Incremental Open…", self)
         incremental_open_act.triggered.connect(self._on_incremental_open)
         file_menu.addAction(incremental_open_act)
 
