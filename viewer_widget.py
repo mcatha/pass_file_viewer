@@ -752,7 +752,8 @@ class ShotViewerWidget(QWidget):
         self._priority_sorted = None
         if self._argsort_thread is not None:
             self._argsort_thread.quit()
-            self._argsort_thread.wait()
+            # Do not wait — let the old sort finish in the background.
+            # _on_argsort_ready will discard its result (size mismatch).
         argsort_thread = QThread(self)
         argsort_worker = _ArgsortWorker(priority)
         argsort_worker.moveToThread(argsort_thread)
@@ -918,6 +919,10 @@ class ShotViewerWidget(QWidget):
 
     def _on_argsort_ready(self, result: np.ndarray) -> None:
         """Called when background argsort completes."""
+        # Discard stale results from a superseded load (size mismatch means the
+        # sort was started for a different dataset; a new sort is already running).
+        if self._shot_priority is None or len(result) != len(self._shot_priority):
+            return
         self._priority_sorted = result
 
     def _on_argsort_thread_done(self) -> None:
