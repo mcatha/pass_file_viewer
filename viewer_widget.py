@@ -672,8 +672,16 @@ class ShotViewerWidget(QWidget):
 
     # ── public API ──────────────────────────────────────────────────
 
-    def load_data(self, data: PassData) -> None:
-        """Load parsed pass data and render shots."""
+    def load_data(self, data: PassData, keep_origin: bool = False) -> None:
+        """Load parsed pass data and render shots.
+
+        Parameters
+        ----------
+        keep_origin : bool
+            When True, the existing centroid origin is preserved instead of
+            being recomputed from the new data.  Use this for incremental
+            loads so the camera position stays stable as new files are added.
+        """
         import time as _time
         _t0 = _time.perf_counter()
 
@@ -699,7 +707,8 @@ class ShotViewerWidget(QWidget):
         # Input may be float64 (after origin offset) or float32 (raw bitfields).
         # Subtract in float64 to preserve precision, then cast to float32.
         raw_pos = np.column_stack((data.x, data.y))
-        self._origin = raw_pos.mean(axis=0).astype(np.float64)
+        if not keep_origin:
+            self._origin = raw_pos.mean(axis=0).astype(np.float64)
         self._positions = (raw_pos - self._origin).astype(np.float32)
         del raw_pos
         _t1 = _time.perf_counter()

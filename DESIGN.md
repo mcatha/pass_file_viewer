@@ -461,6 +461,8 @@ After parsing, the stripe origin from the `.pass.meta` header (`stripeOriginX`, 
 
 When **File → Incremental Open** is checked, opening a new file appends its shots to the existing view instead of replacing. Each file's shots are independently offset by their stripe origin, so shots from different stripes align in wafer coordinates. The status bar shows the number of loaded files, total shot count, and combined file size. Unchecking incremental open and opening a file replaces all data. When multiple files are selected in a single open dialog, incremental mode is enabled automatically and the files are loaded sequentially via a queue.
 
+When adding files incrementally, `load_data` is called with `keep_origin=True` so the existing centroid is preserved. Without this, each incremental load recomputes the centroid from all shots, shifting all GPU-side positions — the camera stays fixed in centroid-relative space, so the entire scene drifts and the newly added file's shots land off-screen.
+
 ### FWHM slider
 
 Logarithmic: slider value ∈ [−200, 200] maps to scale = $10^{v/100}$, giving effective range 0.1–1000 nm/µs. Default is 60 nm/µs (slider value 78).

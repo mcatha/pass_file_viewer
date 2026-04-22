@@ -848,7 +848,8 @@ class MainWindow(QMainWindow):
             data.y = data.y.astype(np.float64) + oy
 
         # Merge into loaded files list
-        if self._incremental_act.isChecked() and self._loaded_files:
+        _incremental = self._incremental_act.isChecked() and bool(self._loaded_files)
+        if _incremental:
             self._loaded_files.extend(results)
         else:
             self._loaded_files = list(results)
@@ -857,7 +858,7 @@ class MainWindow(QMainWindow):
         self._status_label.setText(f"  Rendering {merged.count:,} shots…")
         QApplication.processEvents()
 
-        self._viewer.load_data(merged)
+        self._viewer.load_data(merged, keep_origin=_incremental)
         self._selection_pane.set_data(merged)
 
         # Stripe region metadata
@@ -929,7 +930,8 @@ class MainWindow(QMainWindow):
         data.y = data.y.astype(np.float64) + oy
 
         # Incremental merge or replace
-        if self._incremental_act.isChecked() and self._loaded_files:
+        _incremental = self._incremental_act.isChecked() and bool(self._loaded_files)
+        if _incremental:
             self._loaded_files.append((data, path))
             merged = self._merge_loaded_files()
         else:
@@ -939,7 +941,7 @@ class MainWindow(QMainWindow):
         self._status_label.setText(f"  Rendering {merged.count:,} shots…")
         QApplication.processEvents()
 
-        self._viewer.load_data(merged)
+        self._viewer.load_data(merged, keep_origin=_incremental)
         self._selection_pane.set_data(merged)
 
         # Pass stripe region metadata for hover rectangles
