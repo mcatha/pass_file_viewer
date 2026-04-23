@@ -36,7 +36,7 @@ _ALPHA_MAX  = 0.330    # Gaussian per-shot alpha cap at close zoom
 _DISC_OVERLAP_WHITE = 0.05  # disc-mode: additive white alpha per overlap
 
 _SELECTED_COLOR = np.array([1.0, 0.90, 0.0, 1.0])  # bright gold for selected shot
-_BOX_SELECTED_COLOR = np.array([0.3, 1.0, 0.5, 1.0])  # bright green for box-selected
+_BOX_SELECTED_COLOR = np.array([0.3, 1.0, 0.5, 0.5])  # bright green for box-selected
 _LINE_COLOR = (1.0, 0.40, 0.25, 0.7)      # bright red-ish
 _SEL_LINE_COLOR = (1.0, 0.90, 0.0, 0.95)  # bright gold, matching selected shot
 _MIN_SEL_PX = 7  # minimum click-selection marker size in screen pixels
@@ -511,8 +511,7 @@ class ShotViewerWidget(QWidget):
         self._disc_box_sel_markers = visuals.Markers(parent=self._visual_root, antialias=2,
                                               scaling='scene', symbol='disc',
                                               method='instanced')
-        self._disc_box_sel_markers.set_gl_state(blend=True, depth_test=False,
-                                              blend_func=('src_alpha', 'one'))
+        self._disc_box_sel_markers.set_gl_state('translucent', depth_test=False)
         self._disc_box_sel_markers.set_data(
             np.zeros((1, 2), dtype=np.float32), size=0, edge_width=0
         )
@@ -522,8 +521,7 @@ class ShotViewerWidget(QWidget):
         self._gauss_box_sel_markers = GaussianMarkers(parent=self._visual_root, antialias=2,
                                               scaling='scene', symbol='disc',
                                               method='instanced')
-        self._gauss_box_sel_markers.set_gl_state(blend=True, depth_test=False,
-                                              blend_func=('src_alpha', 'one'))
+        self._gauss_box_sel_markers.set_gl_state('translucent', depth_test=False)
         self._gauss_box_sel_markers.set_data(
             np.zeros((1, 2), dtype=np.float32), size=0, edge_width=0
         )
@@ -2553,8 +2551,6 @@ class ShotViewerWidget(QWidget):
         if len(idx_arr) == 0 or self._positions is None:
             return
 
-        dpp = self._get_data_per_px() or 1.0
-
         if self._locked_indices is not None:
             # For locked (file-selected) indices: show only the currently-rendered
             # shots that belong to the locked set so the overlay matches render density.
@@ -2589,21 +2585,19 @@ class ShotViewerWidget(QWidget):
                 if len(idx_arr) == 0:
                     self._box_sel_markers.set_data(np.empty((0, 2)))
                     return
-            stride = max(1, len(idx_arr) // 500_000)
-            sub = idx_arr[::stride]
+            sub = idx_arr
+            dpp = self._get_data_per_px() or 1.0
             dpp_bucket = int(round(_math.log2(max(dpp, 1e-10)) * 4))
-            cache_key = (id(self._box_selected_indices), stride, dpp_bucket)
+            cache_key = (id(self._box_selected_indices), dpp_bucket)
             if cache_key == getattr(self, '_box_sel_cache_key', None):
                 return
             self._box_sel_cache_key = cache_key
 
-        tint_alpha = min(1.0, _BOX_SELECTED_COLOR[3] / max(dpp, 1.0))
-        box_color = np.array([*_BOX_SELECTED_COLOR[:3], tint_alpha], dtype=np.float32)
         box_sz = self._uniform_size if self._uniform_size is not None else self._sizes[sub]
         self._box_sel_markers.set_data(
             self._positions[sub],
             size=self._box_sel_size(box_sz),
-            face_color=box_color,
+            face_color=_BOX_SELECTED_COLOR,
             edge_width=0,
         )
 
