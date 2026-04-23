@@ -71,7 +71,7 @@ _LABEL_COLOR = QColor(255, 255, 255, 255)    # pure white
 _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
 _AXIS_LABEL_FONT = QFont("Consolas", 17, QFont.Weight.Bold)
 _FIDUCIAL_COLOR      = (1.0, 1.0, 0.55, 0.85)   # light yellow
-_FIDUCIAL_ARM_NM     = 5_000_000   # 5 mm half-length of each arm
+_FIDUCIAL_ARM_NM     = 10_000_000  # 10 mm half-length of each arm
 _FIDUCIAL_CIRCLE_NM  = 3_500_000   # 3.5 mm circle radius (intersects arms)
 _FIDUCIAL_LINE_WIDTH_NM = 400_000  # 0.4 mm stroke width (scales with zoom)
 _FIDUCIAL_CIRCLE_PTS = 64         # polygon approximation of each circle
@@ -620,12 +620,16 @@ class ShotViewerWidget(QWidget):
             color=_fid_c, width=3.5, connect='segments',
             antialias=False, parent=self._visual_root,
         )
+        self._fid_lines.order = 10
+        self._fid_lines.set_gl_state(depth_test=False, blend=True)
         self._fid_lines.visible = False
         self._fid_circles = visuals.Line(
             np.zeros((2, 2), dtype=np.float64),
             color=_fid_c, width=3.5, connect='strip',
             antialias=False, parent=self._visual_root,
         )
+        self._fid_circles.order = 10
+        self._fid_circles.set_gl_state(depth_test=False, blend=True)
         self._fid_circles.visible = False
         self._fid_labels = visuals.Text(
             text='', color=(1.0, 1.0, 1.0, 0.9),
@@ -633,6 +637,8 @@ class ShotViewerWidget(QWidget):
             anchor_x='left', anchor_y='center',
             parent=self._visual_root,
         )
+        self._fid_labels.order = 10
+        self._fid_labels.set_gl_state(depth_test=False, blend=True)
         self._fid_labels.visible = False
         self._fiducial_array: str | None = None
         # Cached geometry for width-on-zoom updates
