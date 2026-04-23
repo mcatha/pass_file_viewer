@@ -72,6 +72,30 @@ class _ShotTableModel(QAbstractTableModel):
         self._indices = np.empty(0, dtype=np.intp)
         self.endResetModel()
 
+    def sort(self, column: int, order=Qt.SortOrder.AscendingOrder) -> None:
+        if self._data is None or len(self._indices) == 0 or column < 0:
+            return
+        idx = self._indices
+        if column == 0:   # per-file shot number
+            file_idxs = np.searchsorted(self._file_offsets, idx + 1, side='right') - 1
+            keys = idx - self._file_offsets[file_idxs]
+        elif column == 1:  # file (sort by load order)
+            keys = np.searchsorted(self._file_offsets, idx + 1, side='right') - 1
+        elif column == 2:
+            keys = self._data.x[idx]
+        elif column == 3:
+            keys = self._data.y[idx]
+        elif column == 4:
+            keys = self._data.dwell[idx]
+        else:
+            return
+        order_arr = np.argsort(keys, kind='stable')
+        if order == Qt.SortOrder.DescendingOrder:
+            order_arr = order_arr[::-1]
+        self.beginResetModel()
+        self._indices = idx[order_arr]
+        self.endResetModel()
+
     # ── QAbstractTableModel interface ──
 
     def rowCount(self, parent=QModelIndex()):
@@ -144,7 +168,7 @@ class SelectionPane(QWidget):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        self._table.setSortingEnabled(False)
+        self._table.setSortingEnabled(True)
         self._table.verticalHeader().setVisible(False)
         self._table.horizontalHeader().setStretchLastSection(False)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
