@@ -1737,10 +1737,6 @@ class ShotViewerWidget(QWidget):
             self._last_view_key = key
             idx = self._priority_indices(vis_idx, n_vis, stride)
             dpos = pos[idx]
-            if len(dpos) > 0:
-                print(f"[upload] rendered={len(idx)} pos_range=({dpos[:,0].min():.0f}..{dpos[:,0].max():.0f}, {dpos[:,1].min():.0f}..{dpos[:,1].max():.0f})")
-            else:
-                print(f"[upload] rendered=0")
             self._uploaded_positions = dpos
             self._rendered_indices = idx
             if self._uniform_size is not None:
@@ -2597,7 +2593,7 @@ class ShotViewerWidget(QWidget):
                     return
             stride = max(1, len(idx_arr) // 500_000)
             sub = idx_arr[::stride]
-            cache_key = (id(self._box_selected_indices), stride)
+            cache_key = (id(self._box_selected_indices), stride, self._decim_stride)
             if cache_key == getattr(self, '_box_sel_cache_key', None):
                 return
             self._box_sel_cache_key = cache_key
