@@ -455,7 +455,8 @@ class _FiducialOverlay(QWidget):
             p.setBrush(QBrush(_FIDUCIAL_PEN_COLOR))
             from PyQt6.QtGui import QPainterPath
             lbl = QPainterPath()
-            lbl.addText(cx + arm_px + 4, cy + 5, _FIDUCIAL_LABEL_FONT, label)
+            lbl.addText(cx + circle_r_px * 0.707 + 3, cy - circle_r_px * 0.707 - 2,
+                        _FIDUCIAL_LABEL_FONT, label)
             p.drawPath(lbl)
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.setPen(pen)
