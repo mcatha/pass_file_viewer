@@ -1039,32 +1039,28 @@ class ShotViewerWidget(QWidget):
 
         # ── Process only the new shots ──────────────────────────────────────
         n_new = len(new_data.x)
+        n_existing = len(self._all_positions)
+
+        # Fill positions, then immediately compute bounding box before the
+        # dwell allocation can evict new_pos from cache.
         new_pos = np.empty((n_new, 2), dtype=np.float32)
         _t0a = _time.perf_counter()
         np.subtract(new_data.x, self._origin[0], out=new_pos[:, 0])
-        _t0b = _time.perf_counter()
         np.subtract(new_data.y, self._origin[1], out=new_pos[:, 1])
-        _t0c = _time.perf_counter()
-        # Keep in float32 — multiplying float32 by a float64 scalar upcasts the
-        # entire array silently.  Cast the coefficient to float32 first.
+        new_pos_min = new_pos.min(axis=0)
+        new_pos_max = new_pos.max(axis=0)
+        _t0b = _time.perf_counter()
+
+        # Fill dwell sizes, then immediately compute size bounds.
         _coef = np.float32(_NM_PER_NS_DWELL * self._fwhm_scale)
         new_dwell_sizes = np.empty(n_new, dtype=np.float32)
         np.multiply(new_data.dwell, _coef, out=new_dwell_sizes)
         np.maximum(new_dwell_sizes, np.float32(1.0), out=new_dwell_sizes)
-        _t0d = _time.perf_counter()
-
-        n_existing = len(self._all_positions)
         new_dmax = float(new_dwell_sizes.max())
         new_dmin = float(new_dwell_sizes.min())
-
-        # Bounding box scalars — compute while new_pos is still hot in cache,
-        # before the concatenations evict it under memory pressure.
-        new_pos_min = new_pos.min(axis=0)
-        new_pos_max = new_pos.max(axis=0)
-        _t0e = _time.perf_counter()
-        print(f"[append-pre] alloc:{(_t0a-_t0)*1000:.0f}ms  subX:{(_t0b-_t0a)*1000:.0f}ms  "
-              f"subY:{(_t0c-_t0b)*1000:.0f}ms  dwell:{(_t0d-_t0c)*1000:.0f}ms  "
-              f"maxmin:{(_t0e-_t0d)*1000:.0f}ms  total:{(_t0e-_t0)*1000:.0f}ms")
+        _t0c = _time.perf_counter()
+        print(f"[append-pre] pos:{(_t0b-_t0a)*1000:.0f}ms  dwell:{(_t0c-_t0b)*1000:.0f}ms  "
+              f"total:{(_t0c-_t0)*1000:.0f}ms")
 
         _ta = _time.perf_counter()
 
