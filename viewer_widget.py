@@ -515,7 +515,7 @@ class ShotViewerWidget(QWidget):
 
         # vispy canvas
         self._canvas = scene.SceneCanvas(
-            keys="interactive", bgcolor=_BG_COLOR, parent=self,
+            keys=None, bgcolor=_BG_COLOR, parent=self,
         )
         self._view = self._canvas.central_widget.add_view()
 
