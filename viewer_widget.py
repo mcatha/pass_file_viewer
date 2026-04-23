@@ -73,7 +73,7 @@ def _fmt_mm(nm: float) -> str:
     """
     s = f"{nm / 1_000_000:.6f}"
     dot = s.index('.')
-    return s[:dot + 4] + ' ' + s[dot + 4:]
+    return s[:dot + 1] + ' ' + s[dot + 1:dot + 4] + ' ' + s[dot + 4:]
 _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
 _AXIS_LABEL_FONT = QFont("Consolas", 17, QFont.Weight.Bold)
 _FIDUCIAL_PEN_COLOR  = QColor(255, 255, 140, 217)   # light yellow
