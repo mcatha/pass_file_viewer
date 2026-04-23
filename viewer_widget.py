@@ -2155,8 +2155,9 @@ class ShotViewerWidget(QWidget):
         )
         label.adjustSize()
         self._pinned_stripes[idx] = (rect, label)
-        self._position_pinned_labels()
         label.setVisible(True)
+        label.adjustSize()   # re-measure after stylesheet font is resolved
+        self._position_pinned_labels()
         self._canvas.update()
 
     def unpin_stripe(self, idx: int) -> None:
@@ -2178,63 +2179,33 @@ class ShotViewerWidget(QWidget):
         return idx in self._pinned_stripes
 
     def _position_pinned_labels(self) -> None:
-        """Reposition all pinned stripe labels without overlap."""
+        """Stack all pinned stripe labels down the right edge, ordered by stripe screen Y."""
         if not self._pinned_stripes:
             return
         cw = self._canvas.native.width()
-        ch = self._canvas.native.height()
         pad = 10
 
-        # Compute natural position for each label (preferred anchor: top-right of AABB)
-        entries: list[tuple[int, int, int, int]] = []  # (nat_y, x, w, h) per label
-        labels: list[QLabel] = []
+        # Order labels by the vertical screen position of each stripe's centre
+        items: list[tuple[float, QLabel, int, int]] = []
         for idx in self._pinned_stripes:
             _, label = self._pinned_stripes[idx]
             aabb = self._stripe_aabbs[idx]
-            tr_corner = np.array([aabb[2], aabb[3]], dtype=np.float64)
-            screen = self._data_to_canvas(tr_corner)
+            centre = np.array(
+                [(aabb[0] + aabb[2]) * 0.5, (aabb[1] + aabb[3]) * 0.5],
+                dtype=np.float64,
+            )
+            screen = self._data_to_canvas(centre)
+            sort_key = float(screen[1]) if screen is not None else float('inf')
             tw = label.width() or label.sizeHint().width()
             th = label.height() or label.sizeHint().height()
-            if screen is not None and 0 <= screen[0] + pad + tw <= cw:
-                nat_x = int(screen[0]) + pad
-                nat_y = int(screen[1]) - th - pad
-            else:
-                nat_x = cw - tw - pad
-                nat_y = ch - th - pad
-            entries.append((nat_y, nat_x, tw, th))
-            labels.append(label)
+            items.append((sort_key, label, tw, th))
+        items.sort(key=lambda t: t[0])
 
-        # Sort by natural y so we stack from top to bottom
-        order = sorted(range(len(entries)), key=lambda i: entries[i][0])
+        y = pad
+        for _, label, tw, th in items:
+            label.move(max(0, cw - tw - pad), y)
+            y += th + pad
 
-        placed: list[tuple[int, int, int, int]] = []  # (x, y, w, h) of placed labels
-        placements: dict[int, tuple[int, int]] = {}   # orig_idx → (x, y)
-        for orig_idx in order:
-            nat_y, x, w, h = entries[orig_idx]
-            y = nat_y
-            # Push down past any label we'd overlap
-            changed = True
-            while changed:
-                changed = False
-                for px, py, pw, ph in placed:
-                    if x < px + pw and x + w > px and y < py + ph and y + h > py:
-                        y = py + ph + pad
-                        changed = True
-            placed.append((x, y, w, h))
-            placements[orig_idx] = (x, y)
-
-        # If the stack overflows the bottom, shift the whole group upward
-        if placed:
-            _, last_y, _, last_h = placed[-1]
-            overflow = last_y + last_h - ch
-            if overflow > 0:
-                _, first_y, _, _ = placed[0]
-                shift = min(overflow, max(0, first_y))
-                placements = {k: (x, y - shift) for k, (x, y) in placements.items()}
-
-        for orig_idx, (x, y) in placements.items():
-            _, _, w, h = entries[orig_idx]
-            labels[orig_idx].move(x, max(0, min(y, ch - h)))
 
     def select_shots(self, indices: np.ndarray) -> None:
         """Public entry point to set the box selection to exactly these indices."""
