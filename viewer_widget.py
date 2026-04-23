@@ -442,21 +442,38 @@ class _FiducialOverlay(QWidget):
         from PyQt6.QtGui import QPainterPath
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        for sx, sy, label in self.points:
-            # Dot
-            p.setPen(QPen(QColor(0, 0, 0, 200), 1.5))
-            p.setBrush(QBrush(_FIDUCIAL_DOT_COLOR))
-            p.drawEllipse(QPointF(sx, sy), 5.0, 5.0)
 
-            # Label: black outline + white fill (same technique as axis arrows)
+        r = 9.0    # circle radius (px)
+        arm = 20.0 # crosshair arm length from centre (px)
+
+        for sx, sy, label in self.points:
+            pt = QPointF(sx, sy)
+
+            # Black shadow pass (drawn slightly thicker, same shapes)
+            shadow_pen = QPen(QColor(0, 0, 0, 200), 3.5)
+            p.setPen(shadow_pen)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(pt, r, r)
+            p.drawLine(QPointF(sx - arm, sy), QPointF(sx + arm, sy))
+            p.drawLine(QPointF(sx, sy - arm), QPointF(sx, sy + arm))
+
+            # Coloured foreground pass
+            fid_pen = QPen(_FIDUCIAL_DOT_COLOR, 1.5)
+            p.setPen(fid_pen)
+            p.drawEllipse(pt, r, r)
+            p.drawLine(QPointF(sx - arm, sy), QPointF(sx + arm, sy))
+            p.drawLine(QPointF(sx, sy - arm), QPointF(sx, sy + arm))
+
+            # Label: black outline + white fill
             lbl_path = QPainterPath()
-            lbl_path.addText(sx + 9, sy + 5, _FIDUCIAL_LABEL_FONT, label)
+            lbl_path.addText(sx + r + 5, sy + 5, _FIDUCIAL_LABEL_FONT, label)
             p.setPen(QPen(QColor(0, 0, 0, 220), 3))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawPath(lbl_path)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(_LABEL_COLOR))
             p.drawPath(lbl_path)
+
         p.end()
 
 
