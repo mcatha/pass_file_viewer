@@ -747,7 +747,7 @@ Only 8 of the 18 columns (A3, B2, B3, C2, C3, D2, D3, E3) have Y sections that o
 | Parameter | Value |
 |---|---|
 | Logo size | 250 mm × 60.42 mm (250 000 000 × 60 416 667 nm), centred on wafer |
-| Shot pitch | 1270 nm (~20% overlap at 1587 nm FWHM beam) |
+| Shot pitch | 1100 nm (~30% overlap at 1587 nm FWHM beam) |
 | Dwell | 16 383 ns (14-bit maximum) |
 | Pass width (X step) | 60 000 nm (60 µm) |
 
