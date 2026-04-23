@@ -1,6 +1,6 @@
 # Pass File Viewer — Design Document
 
-**Version 1.3 — April 2026**
+**Version 1.4 — April 2026**
 
 ## 1. Overview
 
@@ -716,13 +716,82 @@ A `.pass` file (headerless 8-byte shot records) and a companion `.pass.meta` fil
 
 ---
 
-## 13. Easter Eggs
+## 13. MB300 Logo Pass Generator (`logo_passes.py`)
+
+Generates a set of `.pass` files that write the Multibeam logo (`mb-logo-w-tag.png`, 600×145 px) onto a 300 mm wafer using the MB300 system. One embedded-v4-header `.pass` file is written per active (column, master-pass) combination.
+
+### MB300 column layout
+
+The MB300 has **18 individual beam columns** at five X positions (−130, −65, 0, +65, +130 mm) and multiple Y positions. Each column owns a **65 mm wide × 75 mm tall** rectangular area of responsibility, defined by midpoints between adjacent column positions.
+
+| Column group | Beam X | X section | Y section rows |
+|---|---|---|---|
+| A2, A3, A4 | −130 mm | −162.5 → −97.5 mm | 37.5/0/−75 mm centres |
+| B1, B2, B3, B4 | −65 mm | −97.5 → −32.5 mm | 112.5/37.5/−37.5/−112.5 mm centres |
+| C1, C2, C3, C4 | 0 mm | −32.5 → +32.5 mm | 112.5/37.5/−37.5/−112.5 mm centres |
+| D1, D2, D3, D4 | +65 mm | +32.5 → +97.5 mm | 112.5/37.5/−37.5/−112.5 mm centres |
+| E2, E3, E4 | +130 mm | +97.5 → +162.5 mm | 75/0/−75 mm centres |
+
+The A and E column X sections extend to ±162.5 mm in the full grid but are clamped to the logo boundary (±125 mm) for shot generation; they therefore cover only 27.5 mm of their 65 mm nominal width.
+
+Only 8 of the 18 columns (A3, B2, B3, C2, C3, D2, D3, E3) have Y sections that overlap the logo's ±30 mm Y extent. The remaining 10 columns are included in the sweep but produce no shots because their Y cells fall entirely outside the logo. A `valid_y` boolean mask prevents clamped out-of-range rows from generating spurious edge shots.
+
+### Stage motion
+
+- Master sweep: **N_MASTER = 1 084** stage-X positions at 60 µm steps, P_X from −32.5 mm to +32.44 mm.
+- At each stage position n the stage sweeps in Y over the column's full Y section.
+- **Serpentine**: odd-numbered passes scan −Y (shots ordered Y descending, `sortDirection = −1`); even passes scan +Y (ascending, `sortDirection = +1`).
+
+### Physical parameters
+
+| Parameter | Value |
+|---|---|
+| Logo size | 250 mm × 60.42 mm (250 000 000 × 60 416 667 nm), centred on wafer |
+| Shot pitch | 1270 nm (~20% overlap at 1587 nm FWHM beam) |
+| Dwell | 16 383 ns (14-bit maximum) |
+| Pass width (X step) | 60 000 nm (60 µm) |
+
+### Image sampling
+
+```python
+lum   = (0.299*R + 0.587*G + 0.114*B) / 255.0
+alpha = A / 255.0
+dark_mask = (lum * alpha) < 0.5   # True = write a shot
+dark_mask = dark_mask[::-1, :]    # flip Y: row 0 → logo bottom on wafer
+```
+
+Shots are written only where `dark_mask` is True. Y coordinates outside `[0, H_PX)` image rows are masked out (not clamped) to avoid spurious shots at logo edges.
+
+### v4 embedded header
+
+78-byte little-endian struct `"<IHHiiIIdHHdiQQQI??"`, magic `0xB3D11982`, version 4. `stripeOriginX` is the clipped pass X start in wafer coordinates; `stripeOriginY` is `LOGO_Y_MIN`. Shot coordinates are local to the stripe origin.
+
+### Output
+
+Files written to `../logo_passes/` (i.e. `Pass files/logo_passes/`) named `{name}_{n:04d}.pass` where `name` is the beam label (e.g. `C2_0001.pass`).
+
+---
+
+## 14. Beam Diagram Scripts
+
+Two standalone matplotlib scripts generate diagrams of the MB300 column layout. Both output to `Pass files/`.
+
+| Script | Output | Purpose |
+|---|---|---|
+| `beam_diagram.py` | `beam_areas.png` | Annotated diagram showing all 18 column cells with logo boundary overlay (yellow) and colour coding for cells that overlap the logo Y range |
+| `beam_diagram_tool.py` | `beam_areas_tool.png` | General tool diagram — no logo references, uniform cell colour, larger cell labels (upper-left corner of each cell to avoid overlapping the beam initial position marker) |
+
+Both show the 300 mm wafer outline as a dashed circle. A/E outer columns are drawn at their full unclipped ±162.5 mm extent to show the true equal-size grid. Beam initial positions (the physical beam location within each cell) are marked with a red `+`.
+
+---
+
+## 15. Easter Eggs
 
 - **novus_ordo.pass**: when a file with stem `novus_ordo` (case-insensitive) is loaded, the shot colour automatically switches to dollar bill green `(0.33, 0.54, 0.18, 1.0)`. The companion `novus_ordo.png` image (detail from a US dollar bill) can be converted to a `.pass` file using `img_to_pass.py`.
 
 ---
 
-## 14. File Listing
+## 16. File Listing
 
 ```
 pass_viewer/
@@ -733,6 +802,9 @@ pass_viewer/
 ├── selection_pane.py                            # Box-selection data table
 ├── pass_parser.py                               # Binary .pass / .pass.meta parser
 ├── img_to_pass.py                               # PNG → .pass image converter
+├── logo_passes.py                               # MB300 logo pass generator (18-column, v4 header)
+├── beam_diagram.py                              # Column area diagram with logo overlay
+├── beam_diagram_tool.py                         # Column area diagram (general tool, no logo refs)
 ├── generate_test_pass.py                        # Test data generator (random shots)
 ├── generate_chip_pass.py                        # Test data generator (IC layout + fractals)
 ├── generate_icon.py                             # App icon generator
@@ -747,7 +819,7 @@ pass_viewer/
 
 ---
 
-## 15. Known Limitations
+## 17. Known Limitations
 
 1. **Single-file viewer** — no multi-file or stripe-sequence viewing
 2. **2D only** — no 3D perspective or Z-axis support
@@ -756,7 +828,7 @@ pass_viewer/
 
 ---
 
-## 16. Glossary
+## 18. Glossary
 
 | Term | Definition |
 |------|-----------|
