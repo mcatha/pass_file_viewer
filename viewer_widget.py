@@ -2595,7 +2595,9 @@ class ShotViewerWidget(QWidget):
                     return
             stride = max(1, len(idx_arr) // 500_000)
             sub = idx_arr[::stride]
-            cache_key = (id(self._box_selected_indices), stride, self._decim_stride)
+            dpp = self._get_data_per_px() or 1.0
+            dpp_bucket = int(round(_math.log2(max(dpp, 1e-10)) * 4))
+            cache_key = (id(self._box_selected_indices), stride, dpp_bucket)
             if cache_key == getattr(self, '_box_sel_cache_key', None):
                 return
             self._box_sel_cache_key = cache_key
