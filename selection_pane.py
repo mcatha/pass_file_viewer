@@ -66,7 +66,7 @@ class _ShotTableModel(QAbstractTableModel):
         for c in counts[:-1]:
             offsets.append(offsets[-1] + c)
         self._file_offsets = np.array(offsets, dtype=np.intp)
-        self._file_names = list(names)
+        self._file_names = [n[:-5] if n.lower().endswith('.pass') else n for n in names]
 
     def clear(self) -> None:
         self.beginResetModel()
