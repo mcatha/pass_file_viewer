@@ -1216,14 +1216,7 @@ class ShotViewerWidget(QWidget):
         fiducials = (_MB200_FIDUCIALS if self._fiducial_array == 'MB200'
                      else _MB300_FIDUCIALS)
 
-        try:
-            nm_per_px = self._camera.rect.width / max(self._canvas.native.width(), 1)
-        except Exception:
-            nm_per_px = 1e6
-        arm_px    = max(5.0, _FIDUCIAL_ARM_NM / nm_per_px)
-        circle_px = max(3.0, _FIDUCIAL_CIRCLE_NM / nm_per_px)
-
-        # Screen-space unit vectors for data X and Y axes (rotation-aware)
+        # Screen-space unit vectors and scale from scene transform (rotation-aware)
         try:
             tr = self._canvas.scene.node_transform(self._visual_root)
             step = max(float(self._camera.rect.width),
@@ -1234,11 +1227,18 @@ class ShotViewerWidget(QWidget):
             def _unit(dx, dy):
                 n = _math.hypot(dx, dy)
                 return (1.0, 0.0) if n < 1e-12 else (dx / n, dy / n)
-            axis_x = _unit(float(px0[0]) - float(o0[0]), float(px0[1]) - float(o0[1]))
+            dx_x = float(px0[0]) - float(o0[0])
+            dy_x = float(px0[1]) - float(o0[1])
+            axis_x = _unit(dx_x, dy_x)
             axis_y = _unit(float(py0[0]) - float(o0[0]), float(py0[1]) - float(o0[1]))
+            px_per_nm = _math.hypot(dx_x, dy_x) / step
         except Exception:
             axis_x = (1.0, 0.0)
             axis_y = (0.0, -1.0)
+            px_per_nm = 1e-6
+
+        arm_px    = max(5.0, _FIDUCIAL_ARM_NM * px_per_nm)
+        circle_px = max(3.0, _FIDUCIAL_CIRCLE_NM * px_per_nm)
 
         cw = self._canvas.native.width()
         ch = self._canvas.native.height()
