@@ -155,6 +155,12 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        select_all_act = QAction("Select &All Passes", self)
+        select_all_act.triggered.connect(self._on_select_all_passes)
+        file_menu.addAction(select_all_act)
+
+        file_menu.addSeparator()
+
         exit_act = QAction("E&xit", self)
         exit_act.setShortcut(QKeySequence("Alt+F4"))
         exit_act.triggered.connect(self.close)
@@ -1128,6 +1134,15 @@ class MainWindow(QMainWindow):
         offset = sum(self._loaded_files[i][0].count for i in range(file_idx))
         count = self._loaded_files[file_idx][0].count
         return np.arange(offset, offset + count, dtype=np.intp)
+
+    def _on_select_all_passes(self) -> None:
+        if not self._loaded_files:
+            return
+        for idx in range(len(self._loaded_files)):
+            if idx not in self._file_selected:
+                self._file_selected.add(idx)
+                self._viewer.pin_stripe(idx)
+        self._apply_file_selection()
 
     def _apply_file_selection(self) -> None:
         """Merge all file-selected shot ranges and push to the viewer."""
