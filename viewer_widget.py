@@ -617,13 +617,13 @@ class ShotViewerWidget(QWidget):
         self._fid_lines = visuals.Line(
             np.zeros((2, 2), dtype=np.float64),
             color=_fid_c, width=3.5, connect='segments',
-            antialias=True, parent=self._visual_root,
+            antialias=False, parent=self._visual_root,
         )
         self._fid_lines.visible = False
         self._fid_circles = visuals.Line(
             np.zeros((2, 2), dtype=np.float64),
             color=_fid_c, width=3.5, connect='strip',
-            antialias=True, parent=self._visual_root,
+            antialias=False, parent=self._visual_root,
         )
         self._fid_circles.visible = False
         self._fid_labels = visuals.Text(
