@@ -1043,9 +1043,13 @@ class ShotViewerWidget(QWidget):
         new_dmax = float(new_dwell_sizes.max())
         new_dmin = float(new_dwell_sizes.min())
 
+        _ta = _time.perf_counter()
+
         # Positions
         self._all_positions = np.concatenate([self._all_positions, new_pos])
         self._positions = self._all_positions
+
+        _tb = _time.perf_counter()
 
         # Sizes — if existing was uniform, check whether it still is
         if self._uniform_size is not None:
@@ -1062,13 +1066,21 @@ class ShotViewerWidget(QWidget):
 
         self._max_shot_size = max(self._max_shot_size, new_dmax)
 
+        _tc = _time.perf_counter()
+
         # Raw dwells (needed when fwhm_scale changes)
         self._raw_dwells = np.concatenate([self._raw_dwells, new_data.dwell])
+
+        _td = _time.perf_counter()
 
         # Priorities for new shots — fresh random (no fixed seed needed)
         rng = np.random.default_rng()
         new_priorities = rng.random(n_new).astype(np.float32)
         self._shot_priority = np.concatenate([self._shot_priority, new_priorities])
+
+        _te = _time.perf_counter()
+        print(f"[append-prep] pos:{(_tb-_ta)*1000:.0f}ms  sizes:{(_tc-_tb)*1000:.0f}ms  "
+              f"dwells:{(_td-_tc)*1000:.0f}ms  priority:{(_te-_td)*1000:.0f}ms")
 
         # Bounding box — extend, don't recompute
         new_min = new_pos.min(axis=0)
