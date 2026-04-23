@@ -1190,30 +1190,25 @@ class ShotViewerWidget(QWidget):
         return sz
 
     def _box_sel_size(self, base_sz):
-        """Return box-selection marker size with same floor clamp + inflation as data."""
+        """Return box-selection marker size: same floor clamp as data, no stride inflation."""
         dpp = self._get_data_per_px()
         if dpp is not None and dpp > 0:
-            if self._marker_mode == 'gaussian':
-                min_size = dpp * 4.0
-            else:
-                min_size = dpp
+            min_size = dpp * (4.0 if self._marker_mode == 'gaussian' else 1.0)
             if np.isscalar(base_sz):
                 sz = max(base_sz, min_size)
             else:
                 sz = np.maximum(base_sz, min_size)
         else:
             sz = base_sz
-        # Apply same stride inflation as the data layer
-        stride = self._decim_stride
-        amp = self._disc_inflate_amp if self._marker_mode == 'disc' else self._stride_inflate_amp
-        if stride > 1 and amp > 0.0:
-            ls = _math.log10(stride)
-            stride_scale = 1.0 + amp * ls / (ls + 0.2)
+        sz = self._display_size(sz) * 1.05
+        # Ensure at least _MIN_SEL_PX screen pixels (same as click-select marker)
+        if dpp is not None and dpp > 0:
+            min_data = _MIN_SEL_PX * dpp
             if np.isscalar(sz):
-                sz = sz * stride_scale
+                return max(sz, min_data)
             else:
-                sz = sz * stride_scale
-        return self._display_size(sz) * 1.05
+                return np.maximum(sz, min_data)
+        return sz
 
     def set_selected_color(self, rgba: tuple[float, float, float, float]) -> None:
         """Change single-click selection colour."""
@@ -1601,7 +1596,6 @@ class ShotViewerWidget(QWidget):
                 stride_scale_alpha = 1.0 + self._stride_inflate_amp * ls / (ls + 0.2)
                 alpha = max(self._alpha_far, alpha / (stride_scale_alpha ** self._alpha_comp_power))
             self._last_overlap_alpha = alpha
-            print(f"[gauss] dpp={dpp:.2f} eff_dpp={effective_dpp:.2f} alpha={alpha:.5f} stride={stride:.2f} d_ref={d_ref:.1f} p={p:.1f}")
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,
