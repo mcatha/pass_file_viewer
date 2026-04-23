@@ -722,23 +722,23 @@ Generates a set of `.pass` files that write the Multibeam logo (`mb-logo-w-tag.p
 
 ### MB300 column layout
 
-The MB300 has **18 individual beam columns** at five X positions (−130, −65, 0, +65, +130 mm) and multiple Y positions. Each column owns a **65 mm wide × 75 mm tall** rectangular area of responsibility, defined by midpoints between adjacent column positions.
+The MB300 has **18 individual beam columns**. The number suffix (1–4) gives the X position; the letter (A–E) gives the Y position.
 
-| Column group | Beam X | X section | Y section rows |
-|---|---|---|---|
-| A2, A3, A4 | −130 mm | −162.5 → −97.5 mm | 37.5/0/−75 mm centres |
-| B1, B2, B3, B4 | −65 mm | −97.5 → −32.5 mm | 112.5/37.5/−37.5/−112.5 mm centres |
-| C1, C2, C3, C4 | 0 mm | −32.5 → +32.5 mm | 112.5/37.5/−37.5/−112.5 mm centres |
-| D1, D2, D3, D4 | +65 mm | +32.5 → +97.5 mm | 112.5/37.5/−37.5/−112.5 mm centres |
-| E2, E3, E4 | +130 mm | +97.5 → +162.5 mm | 75/0/−75 mm centres |
+| Column group | Beam Y | Y section | Beam X positions | X section |
+|---|---|---|---|---|
+| A2, A3, A4 | +130 mm | +97.5 → +162.5 mm | +75, 0, −75 mm | ±112.5 mm (3 cells, 75 mm each) |
+| B1, B2, B3, B4 | +65 mm | +32.5 → +97.5 mm | +112.5, +37.5, −37.5, −112.5 mm | ±150 mm (4 cells, 75 mm each) |
+| C1, C2, C3, C4 | 0 mm | −32.5 → +32.5 mm | +112.5, +37.5, −37.5, −112.5 mm | ±150 mm (4 cells, 75 mm each) |
+| D1, D2, D3, D4 | −65 mm | −97.5 → −32.5 mm | +112.5, +37.5, −37.5, −112.5 mm | ±150 mm (4 cells, 75 mm each) |
+| E2, E3, E4 | −130 mm | −162.5 → −97.5 mm | +75, 0, −75 mm | ±112.5 mm (3 cells, 75 mm each) |
 
-The A and E column X sections extend to ±162.5 mm in the full grid but are clamped to the logo boundary (±125 mm) for shot generation; they therefore cover only 27.5 mm of their 65 mm nominal width.
+All cells are **75 mm wide × 65 mm tall**. Outer B/C/D columns (col 1 and col 4) are clamped to the logo ±125 mm X boundary for shot generation.
 
-Only 8 of the 18 columns (A3, B2, B3, C2, C3, D2, D3, E3) have Y sections that overlap the logo's ±30 mm Y extent. The remaining 10 columns are included in the sweep but produce no shots because their Y cells fall entirely outside the logo. A `valid_y` boolean mask prevents clamped out-of-range rows from generating spurious edge shots.
+Only C-row cells (Y section ±32.5 mm) overlap the logo's ±30.2 mm Y extent. All other rows produce no shots but are included in the sweep. A `valid_y` boolean mask prevents out-of-range rows from generating spurious edge shots.
 
 ### Stage motion
 
-- Master sweep: **N_MASTER = 1 084** stage-X positions at 60 µm steps, P_X from −32.5 mm to +32.44 mm.
+- Master sweep: **N_MASTER = 1 250** stage-X positions at 60 µm steps, P_X from −37.5 mm to +37.44 mm.
 - At each stage position n the stage sweeps in Y over the column's full Y section.
 - **Serpentine**: odd-numbered passes scan −Y (shots ordered Y descending, `sortDirection = −1`); even passes scan +Y (ascending, `sortDirection = +1`).
 
