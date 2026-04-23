@@ -200,6 +200,22 @@ class MainWindow(QMainWindow):
             self._wafer_actions.append((act, diameter))
         self._wafer_group.triggered.connect(self._on_wafer_outline_select)
 
+        # ── Column Positions submenu ──────────────────────────────
+        col_pos_menu = view_menu.addMenu("Display &Column Positions")
+        self._col_pos_group = QActionGroup(self)
+        self._col_pos_group.setExclusionPolicy(
+            QActionGroup.ExclusionPolicy.ExclusiveOptional
+        )
+        mb200_act = QAction("MB200 Array", self)
+        mb200_act.setCheckable(True)
+        self._col_pos_group.addAction(mb200_act)
+        col_pos_menu.addAction(mb200_act)
+        mb300_act = QAction("MB300 Array", self)
+        mb300_act.setCheckable(True)
+        self._col_pos_group.addAction(mb300_act)
+        col_pos_menu.addAction(mb300_act)
+        self._col_pos_group.triggered.connect(self._on_column_positions_select)
+
         view_menu.addSeparator()
 
         self._selection_pane_act = QAction("Show &Selection Pane", self)
@@ -701,6 +717,13 @@ class MainWindow(QMainWindow):
             if act is action:
                 self._viewer.set_wafer_outline(diameter)
                 return
+
+    def _on_column_positions_select(self, action: QAction) -> None:
+        if action.isChecked():
+            array_type = 'MB200' if 'MB200' in action.text() else 'MB300'
+            self._viewer.set_column_positions(array_type)
+        else:
+            self._viewer.set_column_positions(None)
 
     def _on_open(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(
