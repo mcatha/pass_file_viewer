@@ -932,8 +932,10 @@ class ShotViewerWidget(QWidget):
         self._priority_sorted = None
         if self._argsort_worker is not None:
             self._argsort_worker.finished.disconnect(self._on_argsort_ready)
+            self._argsort_thread.finished.disconnect(self._on_argsort_thread_done)
             self._argsort_thread.quit()
-            self._argsort_thread.wait()
+            # No wait() — thread finishes on its own; signals already disconnected
+            # so stale results won't be applied and new thread refs won't be nulled.
         argsort_thread = QThread(self)
         argsort_worker = _ArgsortWorker(priority)
         argsort_worker.moveToThread(argsort_thread)
@@ -1097,8 +1099,10 @@ class ShotViewerWidget(QWidget):
         self._priority_sorted = None
         if self._argsort_worker is not None:
             self._argsort_worker.finished.disconnect(self._on_argsort_ready)
+            self._argsort_thread.finished.disconnect(self._on_argsort_thread_done)
             self._argsort_thread.quit()
-            self._argsort_thread.wait()
+            # No wait() — thread finishes on its own; signals already disconnected
+            # so stale results won't be applied and new thread refs won't be nulled.
         argsort_thread = QThread(self)
         argsort_worker = _ArgsortWorker(self._shot_priority)
         argsort_worker.moveToThread(argsort_thread)
