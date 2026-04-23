@@ -147,7 +147,8 @@ class SelectionPane(QWidget):
         self._table.setSortingEnabled(False)
         self._table.verticalHeader().setVisible(False)
         self._table.horizontalHeader().setStretchLastSection(False)
-        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self._table.horizontalHeader().setResizeContentsPrecision(50)
         self._table.setAlternatingRowColors(True)
         self._table.setStyleSheet(
             "QTableView { font-family: Consolas, monospace; font-size: 12px; }"
