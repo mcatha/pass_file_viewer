@@ -832,14 +832,13 @@ class ShotViewerWidget(QWidget):
             self._argsort_worker.finished.disconnect(self._on_argsort_ready)
             self._argsort_thread.quit()
             self._argsort_thread.wait()
-        argsort_thread = QThread()
+        argsort_thread = QThread(self)
         argsort_worker = _ArgsortWorker(priority)
         argsort_worker.moveToThread(argsort_thread)
         argsort_thread.started.connect(argsort_worker.run)
         argsort_worker.finished.connect(self._on_argsort_ready)
         argsort_worker.finished.connect(argsort_thread.quit)
         argsort_thread.finished.connect(argsort_worker.deleteLater)
-        argsort_thread.finished.connect(argsort_thread.deleteLater)
         argsort_thread.finished.connect(self._on_argsort_thread_done)
         self._argsort_thread = argsort_thread
         self._argsort_worker = argsort_worker
@@ -975,14 +974,13 @@ class ShotViewerWidget(QWidget):
             self._kdtree_thread.wait()
         self._kdtree = None
         self._kdtree_indices = None
-        thread = QThread()
+        thread = QThread(self)
         worker = _KDTreeWorker(positions, rendered_indices)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_kdtree_ready)
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._on_kdtree_thread_done)
         # prevent GC
         self._kdtree_thread = thread
@@ -2444,14 +2442,13 @@ class ShotViewerWidget(QWidget):
                 self._box_sel_worker.finished.disconnect(self._on_box_sel_ready)
                 self._box_sel_thread.quit()
                 self._box_sel_thread.wait()
-            thread = QThread()
+            thread = QThread(self)
             worker = _BoxSelWorker(self._positions, quad)
             worker.moveToThread(thread)
             thread.started.connect(worker.run)
             worker.finished.connect(self._on_box_sel_ready)
             worker.finished.connect(thread.quit)
             thread.finished.connect(worker.deleteLater)
-            thread.finished.connect(thread.deleteLater)
             thread.finished.connect(self._on_box_sel_thread_done)
             self._box_sel_thread = thread
             self._box_sel_worker = worker

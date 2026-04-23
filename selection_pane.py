@@ -224,14 +224,13 @@ class SelectionPane(QWidget):
             self._sort_worker.finished.disconnect(self._on_sort_ready)
             self._sort_thread.quit()
             self._sort_thread.wait()
-        thread = QThread()
+        thread = QThread(self)
         worker = _SortWorker(indices)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_sort_ready)
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._on_sort_thread_done)
         self._sort_thread = thread
         self._sort_worker = worker

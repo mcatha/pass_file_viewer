@@ -856,7 +856,7 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         QApplication.processEvents()
 
-        thread = QThread()
+        thread = QThread(self)
         worker = _MultiParseWorker(paths)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
@@ -868,7 +868,6 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._on_multi_parse_finished)
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._on_parse_thread_done)
         self._parse_thread = thread
         self._parse_worker = worker
@@ -948,14 +947,13 @@ class MainWindow(QMainWindow):
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         QApplication.processEvents()
 
-        thread = QThread()
+        thread = QThread(self)
         worker = _ParseWorker(path)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.finished.connect(self._on_parse_finished)
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._on_parse_thread_done)
         self._parse_thread = thread
         self._parse_worker = worker
