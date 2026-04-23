@@ -1594,6 +1594,7 @@ class ShotViewerWidget(QWidget):
                 stride_scale_alpha = 1.0 + self._stride_inflate_amp * ls / (ls + 0.2)
                 alpha = max(self._alpha_far, alpha / (stride_scale_alpha ** self._alpha_comp_power))
             self._last_overlap_alpha = alpha
+            self._last_base_alpha = alpha
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,
@@ -1634,9 +1635,9 @@ class ShotViewerWidget(QWidget):
             else:
                 t = (_math.log(dpp) - _math.log(dpp_mid)) / (_math.log(dpp_hi) - _math.log(dpp_mid))
                 f = f_mid * (1.0 - t)
-            print(f"[disc] dpp={dpp:.2f} lo={dpp_lo:.1f} mid={dpp_mid:.1f} hi={dpp_hi:.1f} f_mid={f_mid:.2f} f={f:.5f} ow={ow:.3f}")
 
             self._last_overlap_alpha = ow * f
+            self._last_base_alpha = f
 
             base_fc = np.array([*self._base_color[:3], f], dtype=np.float32)
             self._disc_base_markers.set_data(
@@ -2589,16 +2590,21 @@ class ShotViewerWidget(QWidget):
             sub = idx_arr[::stride]
             dpp = self._get_data_per_px() or 1.0
             dpp_bucket = int(round(_math.log2(max(dpp, 1e-10)) * 4))
-            cache_key = (id(self._box_selected_indices), stride, dpp_bucket)
+            base_alpha = getattr(self, '_last_base_alpha', 1.0)
+            alpha_bucket = int(round(base_alpha * 20))
+            cache_key = (id(self._box_selected_indices), stride, dpp_bucket, alpha_bucket)
             if cache_key == getattr(self, '_box_sel_cache_key', None):
                 return
             self._box_sel_cache_key = cache_key
 
+        base_alpha = getattr(self, '_last_base_alpha', 1.0)
+        box_color = np.array([*_BOX_SELECTED_COLOR[:3], _BOX_SELECTED_COLOR[3] * base_alpha],
+                              dtype=np.float32)
         box_sz = self._uniform_size if self._uniform_size is not None else self._sizes[sub]
         self._box_sel_markers.set_data(
             self._positions[sub],
             size=self._box_sel_size(box_sz),
-            face_color=_BOX_SELECTED_COLOR,
+            face_color=box_color,
             edge_width=0,
         )
 
