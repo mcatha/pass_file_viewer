@@ -2380,7 +2380,10 @@ class ShotViewerWidget(QWidget):
 
         print(f"[SEL] _upload_box_sel_markers: {len(idx_arr)} box_selected, locked={self._locked_indices is not None}")
 
-        if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX:
+        # Always viewport-cull for locked selections (ignore the size threshold so that
+        # large files still get per-frame culled down to in-view shots before striding).
+        # For unlocked rubber-band selections only cull up to _BOX_SEL_VIEWPORT_CULL_MAX.
+        if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX or self._locked_indices is not None:
             # Small selection: viewport-cull so we only upload on-screen markers
             bounds = self._get_viewport_bounds()
             if bounds is not None:
