@@ -2,19 +2,17 @@
 
 Logo (mb-logo-w-tag.png, 600×145 px) is scaled to 250 mm × 60.4 mm and
 centred on the wafer.  One embedded-v4-header .pass file is written per
-active (beam, master-pass) combination.
+active (column, master-pass) combination.
 
-Each MB300 beam has a rectangular area of responsibility defined by:
-  - X section: midpoints between adjacent beam X positions
-  - Y section: midpoints between adjacent beam Y positions (within its column)
-
-Of the 18 MB300 beams, 8 have Y sections that overlap the 60.4 mm logo:
-  A3, B2, B3, C2, C3, D2, D3, E3
+Each MB300 column has a rectangular area of responsibility:
+  - X section: midpoints between adjacent column X positions
+  - Y section: midpoints between adjacent column Y positions (within its row)
+All 18 columns have equal cell size (65 mm wide × 75 mm tall).
 
 Stage motion
 ------------
 - Stage steps 60 µm in X between passes.
-- For each X position the stage sweeps in Y over the beam's Y section.
+- For each X position the stage sweeps in Y over the column's Y section.
 - Serpentine: odd-numbered passes scan −Y; even passes scan +Y.
 """
 
@@ -42,30 +40,41 @@ PASS_WIDTH_NM = 60_000   # 60 µm stage X step
 DWELL_NS      = 16_383   # 14-bit maximum
 HALF          = PITCH_NM // 2
 
-# ── MB300 beam columns (from viewer_widget._MB300_FIDUCIALS) ──────────────────
+# ── MB300 columns (from viewer_widget._MB300_FIDUCIALS) ──────────────────────
 # Each entry: (name, beam_X_nm, x_sec_start, x_sec_end, y_sec_start, y_sec_end)
 #
-# X section boundaries = midpoints between adjacent column X positions:
-#   -125, -97.5, -32.5, +32.5, +97.5, +125 mm
+# All 18 columns have equal cell size: 65 mm wide × 75 mm tall.
 #
-# Y section boundaries = midpoints between adjacent beam Y positions per column,
-# clamped to logo.  Beams B1/B4/C1/C4/D1/D4 (Y=±112.5 mm) and
-# A2/A4/E2/E4 (Y=±75 mm) have sections that don't reach the logo and are omitted.
-#
-#   Inner columns B/C/D: rows 2 (+37.5 mm) and 3 (−37.5 mm)
-#     boundary at Y = 0 (midpoint between +37.5 and −37.5)
-#   Outer columns A/E: row 3 (Y = 0)
-#     section [−37.5, +37.5] mm covers the full logo height
+# X section boundaries (midpoints between adjacent X positions):
+#   ±162.5 mm (outer edge), ±97.5, ±32.5 mm — clamped to logo at ±125 mm
+# Y section boundaries (midpoints between adjacent Y positions per column):
+#   B/C/D rows: ±150, ±75, 0 mm
+#   A/E rows:   ±112.5, ±37.5 mm
 BEAM_COLUMNS = [
-    # name  beam_X          x_sec_start     x_sec_end      y_sec_start  y_sec_end
-    ('A3', -130_000_000,  LOGO_X_MIN,     -97_500_000,   LOGO_Y_MIN,  LOGO_Y_MAX),
-    ('B2',  -65_000_000,  -97_500_000,    -32_500_000,            0,  LOGO_Y_MAX),
-    ('B3',  -65_000_000,  -97_500_000,    -32_500_000,   LOGO_Y_MIN,           0),
-    ('C2',            0,  -32_500_000,     32_500_000,            0,  LOGO_Y_MAX),
-    ('C3',            0,  -32_500_000,     32_500_000,   LOGO_Y_MIN,           0),
-    ('D2',   65_000_000,   32_500_000,     97_500_000,            0,  LOGO_Y_MAX),
-    ('D3',   65_000_000,   32_500_000,     97_500_000,   LOGO_Y_MIN,           0),
-    ('E3',  130_000_000,   97_500_000,    LOGO_X_MAX,    LOGO_Y_MIN,  LOGO_Y_MAX),
+    # name   beam_X          x_sec_start     x_sec_end      y_sec_start    y_sec_end
+    # A column (X = −130 mm); X section clamped to logo left edge
+    ('A2', -130_000_000,  LOGO_X_MIN,     -97_500_000,    37_500_000,   112_500_000),
+    ('A3', -130_000_000,  LOGO_X_MIN,     -97_500_000,   -37_500_000,    37_500_000),
+    ('A4', -130_000_000,  LOGO_X_MIN,     -97_500_000,  -112_500_000,   -37_500_000),
+    # B column (X = −65 mm)
+    ('B1',  -65_000_000,  -97_500_000,    -32_500_000,    75_000_000,   150_000_000),
+    ('B2',  -65_000_000,  -97_500_000,    -32_500_000,             0,    75_000_000),
+    ('B3',  -65_000_000,  -97_500_000,    -32_500_000,   -75_000_000,             0),
+    ('B4',  -65_000_000,  -97_500_000,    -32_500_000,  -150_000_000,   -75_000_000),
+    # C column (X = 0)
+    ('C1',            0,  -32_500_000,     32_500_000,    75_000_000,   150_000_000),
+    ('C2',            0,  -32_500_000,     32_500_000,             0,    75_000_000),
+    ('C3',            0,  -32_500_000,     32_500_000,   -75_000_000,             0),
+    ('C4',            0,  -32_500_000,     32_500_000,  -150_000_000,   -75_000_000),
+    # D column (X = +65 mm)
+    ('D1',   65_000_000,   32_500_000,     97_500_000,    75_000_000,   150_000_000),
+    ('D2',   65_000_000,   32_500_000,     97_500_000,             0,    75_000_000),
+    ('D3',   65_000_000,   32_500_000,     97_500_000,   -75_000_000,             0),
+    ('D4',   65_000_000,   32_500_000,     97_500_000,  -150_000_000,   -75_000_000),
+    # E column (X = +130 mm); X section clamped to logo right edge
+    ('E2',  130_000_000,   97_500_000,    LOGO_X_MAX,    37_500_000,   112_500_000),
+    ('E3',  130_000_000,   97_500_000,    LOGO_X_MAX,   -37_500_000,    37_500_000),
+    ('E4',  130_000_000,   97_500_000,    LOGO_X_MAX,  -112_500_000,   -37_500_000),
 ]
 
 # ── Master pass sweep ─────────────────────────────────────────────────────────
@@ -88,7 +97,7 @@ H_PX, W_PX = DARK_MASK.shape
 
 # ── Pre-compute Y grids for each distinct Y section ───────────────────────────
 # Keyed by (y_sec_start, y_sec_end).
-_y_grids: dict[tuple[int, int], tuple[np.ndarray, np.ndarray]] = {}
+_y_grids: dict[tuple[int, int], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
 for _, _, _, _, ys, ye in BEAM_COLUMNS:
     key = (ys, ye)
     if key in _y_grids:
@@ -96,11 +105,10 @@ for _, _, _, _, ys, ye in BEAM_COLUMNS:
     sec_len = ye - ys
     Y_LOC = np.arange(HALF, sec_len, PITCH_NM, dtype=np.int64)
     # wafer_Y = y_local + ys  →  image row = (wafer_Y − LOGO_Y_MIN) × H_PX / LOGO_HEIGHT_NM
-    IY_ = np.clip(
-        (Y_LOC + ys - LOGO_Y_MIN) * H_PX // LOGO_HEIGHT_NM,
-        0, H_PX - 1,
-    ).astype(np.int32)
-    _y_grids[key] = (Y_LOC, IY_)
+    IY_raw = (Y_LOC + ys - LOGO_Y_MIN) * H_PX // LOGO_HEIGHT_NM
+    valid_y = (IY_raw >= 0) & (IY_raw < H_PX)
+    IY_ = np.clip(IY_raw, 0, H_PX - 1).astype(np.int32)
+    _y_grids[key] = (Y_LOC, IY_, valid_y)
 
 # ── v4 header (78 bytes, little-endian) ───────────────────────────────────────
 _HDR_FMT = "<IHHiiIIdHHdiQQQI??"
@@ -151,8 +159,9 @@ for n in range(1, N_MASTER + 1):
             0, W_PX - 1,
         ).astype(np.int32)
 
-        Y_LOCAL, IY = _y_grids[(ys_start, ys_end)]
+        Y_LOCAL, IY, valid_y = _y_grids[(ys_start, ys_end)]
         hit = DARK_MASK[IY[:, None], IX[None, :]]
+        hit[~valid_y, :] = False
 
         sy, sx = np.nonzero(hit)
         if len(sy) == 0:
