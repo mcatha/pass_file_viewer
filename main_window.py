@@ -155,12 +155,6 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
-        select_all_act = QAction("Select &All Passes", self)
-        select_all_act.triggered.connect(self._on_select_all_passes)
-        file_menu.addAction(select_all_act)
-
-        file_menu.addSeparator()
-
         exit_act = QAction("E&xit", self)
         exit_act.setShortcut(QKeySequence("Alt+F4"))
         exit_act.triggered.connect(self.close)
@@ -191,6 +185,10 @@ class MainWindow(QMainWindow):
         view_menu.addAction(self._selection_pane_act)
         # Keep menu in sync if user closes dock via title-bar X
         self._selection_dock.visibilityChanged.connect(self._selection_pane_act.setChecked)
+
+        select_all_act = QAction("Select &All Passes", self)
+        select_all_act.triggered.connect(self._on_select_all_passes)
+        view_menu.addAction(select_all_act)
 
         view_menu.addSeparator()
 
