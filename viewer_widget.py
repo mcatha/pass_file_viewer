@@ -1041,14 +1041,19 @@ class ShotViewerWidget(QWidget):
         n_new = len(new_data.x)
         n_existing = len(self._all_positions)
 
-        # Fill positions, then immediately compute bounding box before the
-        # dwell allocation can evict new_pos from cache.
-        new_pos = np.empty((n_new, 2), dtype=np.float32)
+        # Bounding box from raw int32 arrays — contiguous, hot in RAM, no large
+        # temp allocation.  new_pos (3 GB) would be evicted from RAM before
+        # min/max could read it, making that operation page from swap (~15 s).
         _t0a = _time.perf_counter()
+        new_pos_min = np.array([float(new_data.x.min()) - self._origin[0],
+                                float(new_data.y.min()) - self._origin[1]], dtype=np.float32)
+        new_pos_max = np.array([float(new_data.x.max()) - self._origin[0],
+                                float(new_data.y.max()) - self._origin[1]], dtype=np.float32)
+        _t0ab = _time.perf_counter()
+
+        new_pos = np.empty((n_new, 2), dtype=np.float32)
         np.subtract(new_data.x, self._origin[0], out=new_pos[:, 0])
         np.subtract(new_data.y, self._origin[1], out=new_pos[:, 1])
-        new_pos_min = new_pos.min(axis=0)
-        new_pos_max = new_pos.max(axis=0)
         _t0b = _time.perf_counter()
 
         # Fill dwell sizes, then immediately compute size bounds.
@@ -1059,8 +1064,8 @@ class ShotViewerWidget(QWidget):
         new_dmax = float(new_dwell_sizes.max())
         new_dmin = float(new_dwell_sizes.min())
         _t0c = _time.perf_counter()
-        print(f"[append-pre] pos:{(_t0b-_t0a)*1000:.0f}ms  dwell:{(_t0c-_t0b)*1000:.0f}ms  "
-              f"total:{(_t0c-_t0)*1000:.0f}ms")
+        print(f"[append-pre] bbox:{(_t0ab-_t0a)*1000:.0f}ms  pos:{(_t0b-_t0ab)*1000:.0f}ms  "
+              f"dwell:{(_t0c-_t0b)*1000:.0f}ms  total:{(_t0c-_t0)*1000:.0f}ms")
 
         _ta = _time.perf_counter()
 
