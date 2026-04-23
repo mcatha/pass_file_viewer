@@ -252,7 +252,7 @@ $$d = \max(\text{dwell\_ns} \times \texttt{\_NM\_PER\_NS\_DWELL} \times \texttt{
 | Constant | Default | Description |
 |----------|---------|-------------|
 | `_NM_PER_NS_DWELL` | 0.01 | Base conversion: 10 nm per µs |
-| `fwhm_scale` | 6.0 | Multiplier — default gives 60 nm/µs FWHM |
+| `fwhm_scale` | 10.0 | Multiplier — default gives 100 nm/µs FWHM |
 | `_DISC_SIZE_SCALE` | 0.667 | Additional scale factor applied in disc mode only |
 
 The FWHM slider in the View menu adjusts `fwhm_scale` logarithmically from 0.01× to 100× (0.1–1000 nm/µs effective).
@@ -471,7 +471,7 @@ The GPU re-upload (`set_data`) is still a full replace — vispy doesn't support
 
 ### FWHM slider
 
-Logarithmic: slider value ∈ [−200, 200] maps to scale = $10^{v/100}$, giving effective range 0.1–1000 nm/µs. Default is 60 nm/µs (slider value 78).
+Logarithmic: slider value ∈ [−200, 200] maps to scale = $10^{v/100}$, giving effective range 0.1–1000 nm/µs. Default is 100 nm/µs (slider value 100).
 
 ### Disc Alpha Controls
 
@@ -747,8 +747,8 @@ Only C-row cells (Y section ±32.5 mm) overlap the logo's ±30.2 mm Y extent. Al
 | Parameter | Value |
 |---|---|
 | Logo size | 250 mm × 60.42 mm (250 000 000 × 60 416 667 nm), centred on wafer |
-| Shot pitch | 1275 nm (spacing 1.30× beam FWHM; shots do not overlap) |
-| Beam FWHM | 983 nm (dwell 16 383 ns × 60 nm/µs viewer default) |
+| Shot pitch | 1275 nm (22% overlap at 1638 nm beam FWHM) |
+| Beam FWHM | 1638 nm (dwell 16 383 ns × 100 nm/µs viewer default) |
 | Dwell | 16 383 ns (14-bit maximum) |
 | Pass width (X step) | 60 000 nm (60 µm) |
 

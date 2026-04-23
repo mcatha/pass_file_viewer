@@ -244,13 +244,13 @@ class MainWindow(QMainWindow):
         fwhm_layout.setContentsMargins(8, 2, 8, 2)
         fwhm_label = QLabel("FWHM:")
         fwhm_label.setStyleSheet("color: #ccc;")
-        self._fwhm_value_label = QLabel("60.00 nm/\u00b5s")
+        self._fwhm_value_label = QLabel("100.00 nm/\u00b5s")
         self._fwhm_value_label.setFixedWidth(100)
         self._fwhm_value_label.setStyleSheet("color: #ccc;")
         self._fwhm_slider = QSlider(Qt.Orientation.Horizontal)
         self._fwhm_slider.setMinimum(-200)
         self._fwhm_slider.setMaximum(200)
-        self._fwhm_slider.setValue(78)        # 10^0.78 ≈ 6.0× → 60 nm/µs
+        self._fwhm_slider.setValue(100)       # 10^1.00 = 10.0× → 100 nm/µs
         self._fwhm_slider.setFixedWidth(160)
         self._fwhm_slider.valueChanged.connect(self._on_fwhm_slider)
         fwhm_layout.addWidget(fwhm_label)

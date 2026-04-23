@@ -788,7 +788,7 @@ class ShotViewerWidget(QWidget):
         self._all_positions: np.ndarray | None = None  # full (N,2) float32
         self._all_sizes: np.ndarray | float | None = None  # full sizes
         self._raw_dwells: np.ndarray | None = None  # raw dwell values (ns)
-        self._fwhm_scale: float = 6.0   # multiplier on _NM_PER_NS_DWELL (default 60 nm/µs)
+        self._fwhm_scale: float = 10.0   # multiplier on _NM_PER_NS_DWELL (default 100 nm/µs)
         self._stride_inflate_amp: float = _STRIDE_INFLATE_AMP  # hardcoded
         self._alpha_comp_power: float = 1.0  # hardcoded: alpha /= stride_scale
         self._alpha_far: float = _ALPHA_FAR  # hardcoded floor
