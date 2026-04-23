@@ -1090,16 +1090,20 @@ class MainWindow(QMainWindow):
     def _apply_file_selection(self) -> None:
         """Merge all file-selected shot ranges and push to the viewer."""
         if not self._file_selected or not self._loaded_files:
+            self._viewer.set_locked_indices(None)
             self._viewer.select_shots(np.empty(0, dtype=np.intp))
             return
         parts = [self._file_shot_indices(i) for i in sorted(self._file_selected)]
-        self._viewer.select_shots(np.concatenate(parts).astype(np.intp))
+        indices = np.concatenate(parts).astype(np.intp)
+        self._viewer.set_locked_indices(indices)
+        self._viewer.select_shots(indices)
 
     def _restore_pinned_stripes(self) -> None:
         """Re-pin all file-selected stripes after a set_stripe_regions call."""
         for idx in self._file_selected:
             if idx < len(self._loaded_files):
                 self._viewer.pin_stripe(idx)
+        self._apply_file_selection()
 
     def _on_stripe_right_clicked(self, stripe_indices: list, global_pos: QPoint) -> None:
         """Show a context menu listing hovered pass files as checkable items."""

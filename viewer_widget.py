@@ -740,6 +740,7 @@ class ShotViewerWidget(QWidget):
         self._kdtree = None
         self._selected_idx = None
         self._box_selected_indices = np.empty(0, dtype=np.intp)
+        self._locked_indices = None
         self._face_colors = _SHOT_COLOR
         self._sel_marker.visible = False
         self._sel_lines.visible = False
@@ -2412,6 +2413,9 @@ class ShotViewerWidget(QWidget):
 
     def _apply_box_selection(self, indices: np.ndarray) -> None:
         """Highlight all box-selected shots and emit the signal."""
+        # Always include any locked (file-selected) indices
+        if self._locked_indices is not None and len(self._locked_indices):
+            indices = np.unique(np.concatenate([self._locked_indices, indices])).astype(np.intp)
         # Clear any single-shot selection
         if self._selected_idx is not None:
             self._selected_idx = None
@@ -2434,6 +2438,10 @@ class ShotViewerWidget(QWidget):
 
     def clear_box_selection(self) -> None:
         """Remove box-selection highlighting."""
+        if self._locked_indices is not None and len(self._locked_indices):
+            # Can't fully clear while files are locked — restore to just locked indices
+            self._apply_box_selection(np.empty(0, dtype=np.intp))
+            return
         if len(self._box_selected_indices):
             self._box_selected_indices = np.empty(0, dtype=np.intp)
             self._box_sel_markers.visible = False
