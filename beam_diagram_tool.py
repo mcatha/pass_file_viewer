@@ -6,27 +6,33 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from pathlib import Path
 
-# Beam positions and full (unclipped) cell boundaries, all in mm
+# Beam positions and full (unclipped) cell boundaries, all in mm.
+# Number suffix → X position; letter → Y position.
 BEAMS = [
-    # name   beam_X  beam_Y   x_cell_start  x_cell_end  y_cell_start  y_cell_end
-    ('A2', -130,   75,   -162.5,  -97.5,   37.5,  112.5),
-    ('A3', -130,    0,   -162.5,  -97.5,  -37.5,   37.5),
-    ('A4', -130,  -75,   -162.5,  -97.5, -112.5,  -37.5),
-    ('B1',  -65,  112.5,  -97.5,  -32.5,   75.0,  150.0),
-    ('B2',  -65,   37.5,  -97.5,  -32.5,    0.0,   75.0),
-    ('B3',  -65,  -37.5,  -97.5,  -32.5,  -75.0,    0.0),
-    ('B4',  -65, -112.5,  -97.5,  -32.5, -150.0,  -75.0),
-    ('C1',    0,  112.5,  -32.5,   32.5,   75.0,  150.0),
-    ('C2',    0,   37.5,  -32.5,   32.5,    0.0,   75.0),
-    ('C3',    0,  -37.5,  -32.5,   32.5,  -75.0,    0.0),
-    ('C4',    0, -112.5,  -32.5,   32.5, -150.0,  -75.0),
-    ('D1',   65,  112.5,   32.5,   97.5,   75.0,  150.0),
-    ('D2',   65,   37.5,   32.5,   97.5,    0.0,   75.0),
-    ('D3',   65,  -37.5,   32.5,   97.5,  -75.0,    0.0),
-    ('D4',   65, -112.5,   32.5,   97.5, -150.0,  -75.0),
-    ('E2',  130,   75,    97.5,  162.5,   37.5,  112.5),
-    ('E3',  130,    0,    97.5,  162.5,  -37.5,   37.5),
-    ('E4',  130,  -75,    97.5,  162.5, -112.5,  -37.5),
+    # name    beam_X   beam_Y   x_cell_start  x_cell_end  y_cell_start  y_cell_end
+    # A row (Y = +130 mm); 3 beams
+    ('A2',   75,  130,   37.5,  112.5,   97.5,  162.5),
+    ('A3',    0,  130,  -37.5,   37.5,   97.5,  162.5),
+    ('A4',  -75,  130, -112.5,  -37.5,   97.5,  162.5),
+    # B row (Y = +65 mm); 4 beams
+    ('B1',  112.5,  65,   75,  150,   32.5,   97.5),
+    ('B2',   37.5,  65,    0,   75,   32.5,   97.5),
+    ('B3',  -37.5,  65,  -75,    0,   32.5,   97.5),
+    ('B4', -112.5,  65, -150,  -75,   32.5,   97.5),
+    # C row (Y = 0 mm); 4 beams
+    ('C1',  112.5,   0,   75,  150,  -32.5,   32.5),
+    ('C2',   37.5,   0,    0,   75,  -32.5,   32.5),
+    ('C3',  -37.5,   0,  -75,    0,  -32.5,   32.5),
+    ('C4', -112.5,   0, -150,  -75,  -32.5,   32.5),
+    # D row (Y = −65 mm); 4 beams
+    ('D1',  112.5, -65,   75,  150,  -97.5,  -32.5),
+    ('D2',   37.5, -65,    0,   75,  -97.5,  -32.5),
+    ('D3',  -37.5, -65,  -75,    0,  -97.5,  -32.5),
+    ('D4', -112.5, -65, -150,  -75,  -97.5,  -32.5),
+    # E row (Y = −130 mm); 3 beams
+    ('E2',   75, -130,   37.5,  112.5, -162.5,  -97.5),
+    ('E3',    0, -130,  -37.5,   37.5, -162.5,  -97.5),
+    ('E4',  -75, -130, -112.5,  -37.5, -162.5,  -97.5),
 ]
 
 fig, ax = plt.subplots(figsize=(14, 10))
@@ -38,15 +44,13 @@ for name, bx, by, xs, xe, ys, ye in BEAMS:
     )
     ax.add_patch(rect)
     # Label: upper-left corner of cell, inset slightly
-    ax.text(xs + 3, ye - 4, name,
+    ax.text(xs + 3, ye - 3, name,
             ha='left', va='top', fontsize=11, fontweight='bold', color='#222', zorder=3)
     # Beam initial position marker
     ax.plot(bx, by, '+', color='#c00', markersize=8, markeredgewidth=1.5, zorder=4)
 
-# Grid lines at column and row boundaries
-for x in [-162.5, -97.5, -32.5, 32.5, 97.5, 162.5]:
-    ax.axvline(x, color='#bbb', linewidth=0.5, zorder=0)
-for y in [-150, -112.5, -75, -37.5, 0, 37.5, 75, 112.5, 150]:
+# Horizontal grid lines at shared Y row boundaries
+for y in [-162.5, -97.5, -32.5, 32.5, 97.5, 162.5]:
     ax.axhline(y, color='#bbb', linewidth=0.5, zorder=0)
 
 # Wafer circle (300 mm diameter)

@@ -4,15 +4,26 @@ Logo (mb-logo-w-tag.png, 600×145 px) is scaled to 250 mm × 60.4 mm and
 centred on the wafer.  One embedded-v4-header .pass file is written per
 active (column, master-pass) combination.
 
-Each MB300 column has a rectangular area of responsibility:
-  - X section: midpoints between adjacent column X positions
-  - Y section: midpoints between adjacent column Y positions (within its row)
-All 18 columns have equal cell size (65 mm wide × 75 mm tall).
+Column layout
+-------------
+The number suffix (1–4) gives the X position; the letter (A–E) gives Y.
+
+  B/C/D rows (4 beams each):  X = +112.5, +37.5, −37.5, −112.5 mm
+  A/E rows   (3 beams each):  X = +75, 0, −75 mm
+  Y positions: A=+130, B=+65, C=0, D=−65, E=−130 mm
+
+Cell boundaries:
+  X: midpoints between adjacent columns → ±150 mm outer (B/C/D), ±112.5 mm (A/E)
+  Y: midpoints between adjacent rows    → ±162.5 mm outer, ±97.5, ±32.5 mm inner
+All cells are 75 mm wide × 65 mm tall.
+
+Only C-row cells (Y section ±32.5 mm) overlap the logo's ±30.2 mm Y extent.
+Outer B/C/D columns (col 1 and col 4) are clamped to ±125 mm logo edge in X.
 
 Stage motion
 ------------
 - Stage steps 60 µm in X between passes.
-- For each X position the stage sweeps in Y over the column's Y section.
+- For each X position the beam sweeps in Y over the column's full Y section.
 - Serpentine: odd-numbered passes scan −Y; even passes scan +Y.
 """
 
@@ -43,46 +54,44 @@ HALF          = PITCH_NM // 2
 # ── MB300 columns (from viewer_widget._MB300_FIDUCIALS) ──────────────────────
 # Each entry: (name, beam_X_nm, x_sec_start, x_sec_end, y_sec_start, y_sec_end)
 #
-# All 18 columns have equal cell size: 65 mm wide × 75 mm tall.
+# All 18 columns have equal cell size: 75 mm wide × 65 mm tall.
 #
 # X section boundaries (midpoints between adjacent X positions):
-#   ±162.5 mm (outer edge), ±97.5, ±32.5 mm — clamped to logo at ±125 mm
-# Y section boundaries (midpoints between adjacent Y positions per column):
-#   B/C/D rows: ±150, ±75, 0 mm
-#   A/E rows:   ±112.5, ±37.5 mm
+#   B/C/D: ±75, ±150 mm outer — col 1 and col 4 clamped to logo ±125 mm
+#   A/E:   ±37.5, ±112.5 mm (no clamping needed)
+# Y section boundaries (midpoints between adjacent Y positions):
+#   ±32.5, ±97.5, ±162.5 mm
 BEAM_COLUMNS = [
-    # name   beam_X          x_sec_start     x_sec_end      y_sec_start    y_sec_end
-    # A column (X = −130 mm); X section clamped to logo left edge
-    ('A2', -130_000_000,  LOGO_X_MIN,     -97_500_000,    37_500_000,   112_500_000),
-    ('A3', -130_000_000,  LOGO_X_MIN,     -97_500_000,   -37_500_000,    37_500_000),
-    ('A4', -130_000_000,  LOGO_X_MIN,     -97_500_000,  -112_500_000,   -37_500_000),
-    # B column (X = −65 mm)
-    ('B1',  -65_000_000,  -97_500_000,    -32_500_000,    75_000_000,   150_000_000),
-    ('B2',  -65_000_000,  -97_500_000,    -32_500_000,             0,    75_000_000),
-    ('B3',  -65_000_000,  -97_500_000,    -32_500_000,   -75_000_000,             0),
-    ('B4',  -65_000_000,  -97_500_000,    -32_500_000,  -150_000_000,   -75_000_000),
-    # C column (X = 0)
-    ('C1',            0,  -32_500_000,     32_500_000,    75_000_000,   150_000_000),
-    ('C2',            0,  -32_500_000,     32_500_000,             0,    75_000_000),
-    ('C3',            0,  -32_500_000,     32_500_000,   -75_000_000,             0),
-    ('C4',            0,  -32_500_000,     32_500_000,  -150_000_000,   -75_000_000),
-    # D column (X = +65 mm)
-    ('D1',   65_000_000,   32_500_000,     97_500_000,    75_000_000,   150_000_000),
-    ('D2',   65_000_000,   32_500_000,     97_500_000,             0,    75_000_000),
-    ('D3',   65_000_000,   32_500_000,     97_500_000,   -75_000_000,             0),
-    ('D4',   65_000_000,   32_500_000,     97_500_000,  -150_000_000,   -75_000_000),
-    # E column (X = +130 mm); X section clamped to logo right edge
-    ('E2',  130_000_000,   97_500_000,    LOGO_X_MAX,    37_500_000,   112_500_000),
-    ('E3',  130_000_000,   97_500_000,    LOGO_X_MAX,   -37_500_000,    37_500_000),
-    ('E4',  130_000_000,   97_500_000,    LOGO_X_MAX,  -112_500_000,   -37_500_000),
+    # name   beam_X            x_sec_start       x_sec_end        y_sec_start      y_sec_end
+    # A row (Y = +130 mm); 3 beams at X = +75, 0, −75 mm
+    ('A2',  75_000_000,   37_500_000,  112_500_000,   97_500_000,  162_500_000),
+    ('A3',           0,  -37_500_000,   37_500_000,   97_500_000,  162_500_000),
+    ('A4', -75_000_000, -112_500_000,  -37_500_000,   97_500_000,  162_500_000),
+    # B row (Y = +65 mm); 4 beams at X = +112.5, +37.5, −37.5, −112.5 mm
+    ('B1',  112_500_000,  75_000_000,  LOGO_X_MAX,    32_500_000,   97_500_000),
+    ('B2',   37_500_000,           0,  75_000_000,    32_500_000,   97_500_000),
+    ('B3',  -37_500_000,  -75_000_000,          0,    32_500_000,   97_500_000),
+    ('B4', -112_500_000,  LOGO_X_MIN,  -75_000_000,   32_500_000,   97_500_000),
+    # C row (Y = 0 mm); 4 beams — only row that overlaps the logo Y extent
+    ('C1',  112_500_000,  75_000_000,  LOGO_X_MAX,   -32_500_000,   32_500_000),
+    ('C2',   37_500_000,           0,  75_000_000,   -32_500_000,   32_500_000),
+    ('C3',  -37_500_000,  -75_000_000,          0,   -32_500_000,   32_500_000),
+    ('C4', -112_500_000,  LOGO_X_MIN,  -75_000_000,  -32_500_000,   32_500_000),
+    # D row (Y = −65 mm); 4 beams
+    ('D1',  112_500_000,  75_000_000,  LOGO_X_MAX,   -97_500_000,  -32_500_000),
+    ('D2',   37_500_000,           0,  75_000_000,   -97_500_000,  -32_500_000),
+    ('D3',  -37_500_000,  -75_000_000,          0,   -97_500_000,  -32_500_000),
+    ('D4', -112_500_000,  LOGO_X_MIN,  -75_000_000,  -97_500_000,  -32_500_000),
+    # E row (Y = −130 mm); 3 beams at X = +75, 0, −75 mm
+    ('E2',  75_000_000,   37_500_000,  112_500_000,  -162_500_000,  -97_500_000),
+    ('E3',           0,  -37_500_000,   37_500_000,  -162_500_000,  -97_500_000),
+    ('E4', -75_000_000, -112_500_000,  -37_500_000,  -162_500_000,  -97_500_000),
 ]
 
 # ── Master pass sweep ─────────────────────────────────────────────────────────
-# Driven by the 65 mm wide central sections (B, C, D).
-# A3 activates at pass 626 (beam_X + P_X = x_sec_start → P_X = +5 mm).
-# E3 deactivates after pass 459 (beam_X + P_X = x_sec_end → P_X = −5 mm).
-P_X_FIRST = -32_500_000
-N_MASTER   = 1_084   # ceil(65_000_000 / 60_000)
+# All 18 columns are active for the same P_X range: −37.5 mm to +37.5 mm.
+P_X_FIRST = -37_500_000
+N_MASTER   = 1_250   # ceil(75_000_000 / 60_000)
 
 # ── Image preprocessing ───────────────────────────────────────────────────────
 _img  = Image.open(_LOGO).convert("RGBA")
