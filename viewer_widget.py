@@ -2182,32 +2182,44 @@ class ShotViewerWidget(QWidget):
         return idx in self._pinned_stripes
 
     def _position_pinned_labels(self) -> None:
-        """Stack all pinned stripe labels down the right edge, ordered by stripe screen Y."""
+        """Place each pinned stripe label near its stripe; push down to resolve overlaps."""
         if not self._pinned_stripes:
             return
         cw = self._canvas.native.width()
         pad = 10
 
-        # Order labels by the vertical screen position of each stripe's centre
-        items: list[tuple[float, QLabel, int, int]] = []
+        items: list[tuple[float, float, QLabel, int, int]] = []
         for idx in self._pinned_stripes:
             _, label = self._pinned_stripes[idx]
             aabb = self._stripe_aabbs[idx]
-            centre = np.array(
-                [(aabb[0] + aabb[2]) * 0.5, (aabb[1] + aabb[3]) * 0.5],
-                dtype=np.float64,
-            )
-            screen = self._data_to_canvas(centre)
-            sort_key = float(screen[1]) if screen is not None else float('inf')
+            x0, y0, x1, y1 = aabb
+            # Project all four corners to find the screen bounding box
+            sx_vals, sy_vals = [], []
+            for cx, cy in ((x0, y0), (x1, y0), (x0, y1), (x1, y1)):
+                sc = self._data_to_canvas(np.array([cx, cy], dtype=np.float64))
+                if sc is not None:
+                    sx_vals.append(sc[0])
+                    sy_vals.append(sc[1])
+            screen_right = max(sx_vals) if sx_vals else cw
+            screen_top   = min(sy_vals) if sy_vals else pad
             tw = label.width() or label.sizeHint().width()
             th = label.height() or label.sizeHint().height()
-            items.append((sort_key, label, tw, th))
+            items.append((screen_top, screen_right, label, tw, th))
+
+        # Sort top-to-bottom so earlier items get priority
         items.sort(key=lambda t: t[0])
 
-        y = pad
-        for _, label, tw, th in items:
-            label.move(max(0, cw - tw - pad), y)
-            y += th + pad
+        placed: list[tuple[float, float, int, int]] = []
+        for screen_top, screen_right, label, tw, th in items:
+            x = float(min(screen_right + pad, cw - tw - pad))
+            x = max(0.0, x)
+            y = max(float(pad), float(screen_top))
+            # Push down past any already-placed label that overlaps in x and y
+            for px, py, ptw, pth in placed:
+                if x < px + ptw and x + tw > px and y < py + pth + pad:
+                    y = py + pth + pad
+            label.move(int(x), int(y))
+            placed.append((x, y, tw, th))
 
 
     def select_shots(self, indices: np.ndarray) -> None:
