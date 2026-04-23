@@ -197,10 +197,12 @@ class SelectionPane(QWidget):
         self._sort_thread: QThread | None = None
         self._sort_worker: _SortWorker | None = None
         self._pending_count: int = 0
+        self._current_indices: np.ndarray = np.empty(0, dtype=np.intp)
 
     def set_data(self, data: PassData) -> None:
         """Store reference to the loaded pass data."""
         self._data = data
+        self._current_indices = np.empty(0, dtype=np.intp)
 
     def set_file_boundaries(self, names: list[str], counts: list[int]) -> None:
         """Update per-file name/count info so Shot # and File columns are correct."""
@@ -208,6 +210,10 @@ class SelectionPane(QWidget):
 
     def update_selection(self, indices: list[int]) -> None:
         """Populate the table with the given shot indices (0-based), sorted by shot number."""
+        arr = np.asarray(indices, dtype=np.intp)
+        if (len(arr) == len(self._current_indices)
+                and np.array_equal(np.sort(arr), self._current_indices)):
+            return  # identical selection — skip the clear/re-sort flash
         total = len(indices)
         self._pending_count = total
         self._header_label.setText(f"Selection  ({total:,} shots)  —  loading…")
@@ -228,6 +234,7 @@ class SelectionPane(QWidget):
         thread.start()
 
     def _on_sort_ready(self, sorted_indices: np.ndarray) -> None:
+        self._current_indices = sorted_indices   # sorted ascending — used for dedup check
         self._model.set_sorted(self._data, sorted_indices)
         self._header_label.setText(f"Selection  ({self._pending_count:,} shots)")
         QTimer.singleShot(0, self._emit_content_width)
