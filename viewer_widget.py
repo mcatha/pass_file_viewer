@@ -54,6 +54,15 @@ _PINNED_STRIPE_LABEL_STYLE = (
     "font-family: Consolas, monospace;"
     "font-size: 11px;"
 )
+_SHOT1_LABEL_STYLE = (
+    "background-color: rgba(40, 35, 10, 210);"
+    "color: #ffe570;"
+    "border: 1px solid #c8a820;"
+    "border-radius: 4px;"
+    "padding: 3px 6px;"
+    "font-family: Consolas, monospace;"
+    "font-size: 11px;"
+)
 
 # Unit circle for wafer outline (257 points → 256 segments, closed)
 _theta = np.linspace(0, 2 * np.pi, 257)
@@ -488,6 +497,8 @@ class ShotViewerWidget(QWidget):
                                       blend_func=('src_alpha', 'one'))
         self._shot1_core.visible = False
 
+        self._shot1_labels: list[QLabel] = []   # persistent "Shot 1" labels, one per file
+
         # Ruler line (data-space, white)
         self._ruler_line = visuals.Line(parent=self._visual_root, color=(1, 1, 1, 0.9), width=2)
         self._ruler_line.visible = False
@@ -766,6 +777,9 @@ class ShotViewerWidget(QWidget):
         self._box_sel_markers.visible = False
         self._shot1_halo.visible = False
         self._shot1_core.visible = False
+        for lbl in self._shot1_labels:
+            lbl.deleteLater()
+        self._shot1_labels.clear()
 
         if data.count == 0:
             self._markers.set_data(np.empty((0, 2)))
@@ -1031,6 +1045,8 @@ class ShotViewerWidget(QWidget):
         if self._positions is None or not self._lines.visible or not self._file_break_offsets:
             self._shot1_halo.visible = False
             self._shot1_core.visible = False
+            for lbl in self._shot1_labels:
+                lbl.setVisible(False)
             return
 
         shot1_pos = self._positions[np.array(self._file_break_offsets, dtype=np.intp)]
@@ -1052,6 +1068,44 @@ class ShotViewerWidget(QWidget):
             edge_width=0,
         )
         self._shot1_core.visible = True
+
+        # Rebuild persistent "Shot 1" labels — one per file
+        for lbl in self._shot1_labels:
+            lbl.deleteLater()
+        self._shot1_labels.clear()
+        for _ in self._file_break_offsets:
+            lbl = QLabel("Shot 1", self._canvas.native)
+            lbl.setStyleSheet(_SHOT1_LABEL_STYLE)
+            lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            lbl.adjustSize()
+            lbl.setVisible(False)
+            self._shot1_labels.append(lbl)
+
+        self._reposition_shot1_labels()
+
+    def _reposition_shot1_labels(self) -> None:
+        """Show each 'Shot 1' label next to its lens-flare if on-screen, hide otherwise."""
+        if not self._shot1_labels or self._positions is None:
+            return
+        cw = self._canvas.native.width()
+        ch = self._canvas.native.height()
+        pad = 16   # px offset from the centre of the flare
+        for lbl, offset in zip(self._shot1_labels, self._file_break_offsets):
+            sc = self._data_to_canvas(self._positions[offset])
+            if sc is None:
+                lbl.setVisible(False)
+                continue
+            sx, sy = float(sc[0]), float(sc[1])
+            lw, lh = lbl.width() or lbl.sizeHint().width(), lbl.height() or lbl.sizeHint().height()
+            # Try right of flare; fall back to left if it clips the canvas edge
+            lx = int(sx) + pad
+            if lx + lw > cw:
+                lx = int(sx) - pad - lw
+            ly = int(sy) - lh // 2
+            ly = max(0, min(ly, ch - lh))
+            on_screen = (0 <= sx <= cw) and (0 <= sy <= ch)
+            lbl.move(lx, ly)
+            lbl.setVisible(on_screen)
 
     def set_lines_visible(self, visible: bool) -> None:
         """Toggle shot connection lines."""
@@ -1817,6 +1871,7 @@ class ShotViewerWidget(QWidget):
         if self._hovered_stripe_idx is not None:
             self._position_stripe_tooltip()
         self._position_pinned_labels()
+        self._reposition_shot1_labels()
 
         # Throttled shot stride update on zoom
         if self._all_positions is not None:
@@ -2181,20 +2236,6 @@ class ShotViewerWidget(QWidget):
         data_x, data_y = self._pending_hover_pos
         mx, my = self._pending_hover_px
         self._pending_hover_pos = None
-
-        # Shot-1 lens-flare proximity check — screen-space, takes priority
-        if (self._lines.visible and self._positions is not None
-                and len(self._file_break_offsets) > 0):
-            for offset in self._file_break_offsets:
-                sc = self._data_to_canvas(self._positions[offset])
-                if sc is not None:
-                    dx, dy = mx - sc[0], my - sc[1]
-                    if dx * dx + dy * dy <= 20 * 20:
-                        self._hover_tooltip.setText("Shot 1")
-                        self._hover_tooltip.adjustSize()
-                        self._hover_tooltip.move(int(mx) + 15, int(my) - 10)
-                        self._hover_tooltip.setVisible(True)
-                        return
 
         if self._kdtree is None or self._data is None:
             return
