@@ -1957,7 +1957,7 @@ class ShotViewerWidget(QWidget):
                 break
         if hovered != self._hovered_stripe_idx:
             self._hovered_stripe_idx = hovered
-            if hovered is not None and self._stripe_rect is not None:
+            if hovered is not None and self._stripe_rect is not None and hovered not in self._pinned_stripes:
                 aabb = self._stripe_aabbs[hovered]
                 cx = (aabb[0] + aabb[2]) / 2
                 cy = (aabb[1] + aabb[3]) / 2
