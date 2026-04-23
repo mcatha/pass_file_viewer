@@ -77,10 +77,10 @@ class _ShotTableModel(QAbstractTableModel):
             return
         idx = self._indices
         if column == 0:   # per-file shot number
-            file_idxs = np.searchsorted(self._file_offsets, idx + 1, side='right') - 1
+            file_idxs = np.searchsorted(self._file_offsets, idx, side='right') - 1
             keys = idx - self._file_offsets[file_idxs]
         elif column == 1:  # file (sort by load order)
-            keys = np.searchsorted(self._file_offsets, idx + 1, side='right') - 1
+            keys = np.searchsorted(self._file_offsets, idx, side='right') - 1
         elif column == 2:
             keys = self._data.x[idx]
         elif column == 3:
@@ -120,11 +120,11 @@ class _ShotTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             if col == 0:
-                file_idx = int(np.searchsorted(self._file_offsets, idx + 1, side='right') - 1)
+                file_idx = int(np.searchsorted(self._file_offsets, idx, side='right') - 1)
                 shot_num = idx - int(self._file_offsets[file_idx]) + 1
                 return f"{shot_num:,}"
             elif col == 1:
-                file_idx = int(np.searchsorted(self._file_offsets, idx + 1, side='right') - 1)
+                file_idx = int(np.searchsorted(self._file_offsets, idx, side='right') - 1)
                 return self._file_names[file_idx] if file_idx < len(self._file_names) else ""
             elif col == 2:
                 return f"{self._data.x[idx]:,.0f}"
