@@ -966,6 +966,7 @@ class MainWindow(QMainWindow):
         self._parse_worker = None
 
     def closeEvent(self, event) -> None:
+        self._media_player.stop()
         if self._parse_thread is not None:
             self._parse_thread.quit()
             self._parse_thread.wait()
