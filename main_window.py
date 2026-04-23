@@ -6,11 +6,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, QObject, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QObject, QPoint, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QMainWindow,
     QFileDialog,
+    QMenu,
     QMessageBox,
     QStatusBar,
     QLabel,
@@ -109,10 +110,13 @@ class MainWindow(QMainWindow):
         self._viewer.box_selected.connect(self._on_box_selection)
         # Connect KD-tree ready signal
         self._viewer.kdtree_ready.connect(self._on_kdtree_ready)
+        # Connect stripe right-click signal
+        self._viewer.stripe_right_clicked.connect(self._on_stripe_right_clicked)
         # Background parse thread state
         self._parse_thread: QThread | None = None
         self._parse_worker: _ParseWorker | None = None
         self._loaded_files: list[tuple[PassData, Path]] = []
+        self._file_selected: set[int] = set()  # file indices currently "file-selected"
         self._next_load_incremental: bool = False
         # ── status bar ──────────────────────────────────────────────
         self._status_label = QLabel("  No file loaded")
@@ -888,6 +892,7 @@ class MainWindow(QMainWindow):
             self._loaded_files.extend(results)
         else:
             self._loaded_files = list(results)
+            self._file_selected.clear()
         merged = self._merge_loaded_files()
 
         self._status_label.setText(f"  Rendering {merged.count:,} shots…")
@@ -911,6 +916,7 @@ class MainWindow(QMainWindow):
                 "overlap": h.overlap,
             })
         self._viewer.set_stripe_regions(regions)
+        self._restore_pinned_stripes()
 
         n = len(self._loaded_files)
         self.setWindowTitle(f"Pass File Viewer — {n} files")
@@ -972,6 +978,7 @@ class MainWindow(QMainWindow):
             merged = self._merge_loaded_files()
         else:
             self._loaded_files = [(data, path)]
+            self._file_selected.clear()
             merged = data
 
         self._status_label.setText(f"  Rendering {merged.count:,} shots…")
@@ -995,6 +1002,7 @@ class MainWindow(QMainWindow):
                 "overlap": h.overlap,
             })
         self._viewer.set_stripe_regions(regions)
+        self._restore_pinned_stripes()
 
         # Easter egg: dollar bill green for novus_ordo
         if path.stem.lower() == "novus_ordo":
@@ -1070,3 +1078,55 @@ class MainWindow(QMainWindow):
         self._selection_pane.update_selection(indices)
         if len(indices):
             self._selection_dock.setVisible(True)
+
+    # ── file selection (right-click menu) ───────────────────────────
+
+    def _file_shot_indices(self, file_idx: int) -> np.ndarray:
+        """Return the merged-array index range for the given file."""
+        offset = sum(self._loaded_files[i][0].count for i in range(file_idx))
+        count = self._loaded_files[file_idx][0].count
+        return np.arange(offset, offset + count, dtype=np.intp)
+
+    def _apply_file_selection(self) -> None:
+        """Merge all file-selected shot ranges and push to the viewer."""
+        if not self._file_selected or not self._loaded_files:
+            self._viewer.select_shots(np.empty(0, dtype=np.intp))
+            return
+        parts = [self._file_shot_indices(i) for i in sorted(self._file_selected)]
+        self._viewer.select_shots(np.concatenate(parts).astype(np.intp))
+
+    def _restore_pinned_stripes(self) -> None:
+        """Re-pin all file-selected stripes after a set_stripe_regions call."""
+        for idx in self._file_selected:
+            if idx < len(self._loaded_files):
+                self._viewer.pin_stripe(idx)
+
+    def _on_stripe_right_clicked(self, stripe_indices: list, global_pos: QPoint) -> None:
+        """Show a context menu listing hovered pass files as checkable items."""
+        menu = QMenu(self)
+        actions: list[tuple[int, QAction]] = []
+        for idx in stripe_indices:
+            if idx >= len(self._loaded_files):
+                continue
+            _, path = self._loaded_files[idx]
+            act = QAction(path.name, self)
+            act.setCheckable(True)
+            act.setChecked(idx in self._file_selected)
+            menu.addAction(act)
+            actions.append((idx, act))
+        if not actions:
+            return
+        menu.exec(global_pos)
+        # Process results: pin/unpin and rebuild selection
+        changed = False
+        for idx, act in actions:
+            if act.isChecked() and idx not in self._file_selected:
+                self._file_selected.add(idx)
+                self._viewer.pin_stripe(idx)
+                changed = True
+            elif not act.isChecked() and idx in self._file_selected:
+                self._file_selected.discard(idx)
+                self._viewer.unpin_stripe(idx)
+                changed = True
+        if changed:
+            self._apply_file_selection()

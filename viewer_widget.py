@@ -45,6 +45,15 @@ _RUBBER_BAND_PEN = QColor(100, 200, 255, 200)
 _RUBBER_BAND_FILL = QColor(100, 200, 255, 40)
 _BG_COLOR = "#1e1e1e"
 _BOX_SEL_VIEWPORT_CULL_MAX = 1_000_000  # above this, skip per-frame viewport cull
+_PINNED_STRIPE_LABEL_STYLE = (
+    "background-color: rgba(20, 50, 40, 230);"
+    "color: #7fffcf;"
+    "border: 1px solid #2fd9a0;"
+    "border-radius: 4px;"
+    "padding: 4px 6px;"
+    "font-family: Consolas, monospace;"
+    "font-size: 11px;"
+)
 
 # Unit circle for wafer outline (257 points → 256 segments, closed)
 _theta = np.linspace(0, 2 * np.pi, 257)
@@ -400,6 +409,9 @@ class ShotViewerWidget(QWidget):
     # Emitted when the KD-tree finishes building in the background.
     kdtree_ready = pyqtSignal()
 
+    # Emitted on right-click over a stripe.  Carries (list[int] stripe indices, QPoint global pos).
+    stripe_right_clicked = pyqtSignal(list, object)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
@@ -671,6 +683,7 @@ class ShotViewerWidget(QWidget):
         self._stripe_aabbs: list[tuple[float, float, float, float]] = []
         self._stripe_rect: visuals.Rectangle | None = None
         self._hovered_stripe_idx: int | None = None
+        self._pinned_stripes: dict[int, tuple[visuals.Rectangle, QLabel]] = {}
 
         self._stripe_tooltip = QLabel(self._canvas.native)
         self._stripe_tooltip.setStyleSheet(_tooltip_style)
@@ -853,6 +866,7 @@ class ShotViewerWidget(QWidget):
 
     def set_stripe_regions(self, regions: list[dict]) -> None:
         """Set stripe region metadata for hover-activated rectangle display."""
+        self._clear_pinned_stripes()
         self._stripe_regions = regions
         self._hovered_stripe_idx = None
         self._stripe_tooltip.setVisible(False)
@@ -1716,6 +1730,7 @@ class ShotViewerWidget(QWidget):
         # Reposition stripe tooltip so it stays anchored during pan/zoom
         if self._hovered_stripe_idx is not None:
             self._position_stripe_tooltip()
+        self._position_pinned_labels()
 
         # Throttled shot stride update on zoom
         if self._all_positions is not None:
@@ -1964,6 +1979,84 @@ class ShotViewerWidget(QWidget):
                 self._stripe_rect.visible = False
                 self._stripe_tooltip.setVisible(False)
 
+    def pin_stripe(self, idx: int) -> None:
+        """Show a permanent boundary + label for the given stripe (persists without hover)."""
+        if idx in self._pinned_stripes or idx >= len(self._stripe_aabbs):
+            return
+        x0, y0, x1, y1 = self._stripe_aabbs[idx]
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        w, h = x1 - x0, y1 - y0
+        rect = visuals.Rectangle(
+            center=(cx, cy), width=w, height=h,
+            border_color=(0.2, 1.0, 0.8, 0.9),
+            color=(0, 0, 0, 0),
+            border_width=2,
+            parent=self._visual_root,
+        )
+        label = QLabel(self._canvas.native)
+        label.setStyleSheet(_PINNED_STRIPE_LABEL_STYLE)
+        label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        r = self._stripe_regions[idx]
+        label.setText(
+            f"File: {r['name']}\n"
+            f"Shots: {r['shots']:,}\n"
+            f"Origin: ({r['originX']:,}, {r['originY']:,})\n"
+            f"Width: {r['width']:,}   Length: {r['length']:,}\n"
+            f"SubField Height: {r['subFieldHeight']:,}\n"
+            f"Overlap: {r['overlap']:,}"
+        )
+        label.adjustSize()
+        self._pinned_stripes[idx] = (rect, label)
+        self._position_pinned_label(idx)
+        label.setVisible(True)
+        self._canvas.update()
+
+    def unpin_stripe(self, idx: int) -> None:
+        """Remove the permanent boundary + label for the given stripe."""
+        if idx not in self._pinned_stripes:
+            return
+        rect, label = self._pinned_stripes.pop(idx)
+        rect.parent = None
+        label.setVisible(False)
+        label.deleteLater()
+        self._canvas.update()
+
+    def _clear_pinned_stripes(self) -> None:
+        """Remove all pinned stripe visuals (called on data reload)."""
+        for idx in list(self._pinned_stripes):
+            self.unpin_stripe(idx)
+
+    def is_stripe_pinned(self, idx: int) -> bool:
+        return idx in self._pinned_stripes
+
+    def _position_pinned_label(self, idx: int) -> None:
+        """Position a single pinned stripe label near its AABB corner."""
+        if idx not in self._pinned_stripes:
+            return
+        _, label = self._pinned_stripes[idx]
+        aabb = self._stripe_aabbs[idx]
+        tr_corner = np.array([aabb[2], aabb[3]], dtype=np.float64)
+        screen = self._data_to_canvas(tr_corner)
+        cw = self._canvas.native.width()
+        ch = self._canvas.native.height()
+        tw, th = label.width(), label.height()
+        pad = 10
+        if (screen is not None
+                and 0 <= screen[0] + pad + tw <= cw
+                and 0 <= screen[1] - th - pad <= ch):
+            label.move(int(screen[0]) + pad, int(screen[1]) - th - pad)
+        else:
+            label.move(cw - tw - pad, ch - th - pad)
+
+    def _position_pinned_labels(self) -> None:
+        """Reposition all pinned stripe labels (called on camera change)."""
+        for idx in self._pinned_stripes:
+            self._position_pinned_label(idx)
+
+    def select_shots(self, indices: np.ndarray) -> None:
+        """Public entry point to set the box selection to exactly these indices."""
+        self._apply_box_selection(indices)
+
     def _do_hover_query(self) -> None:
         """Perform the actual KD-tree hover lookup (throttled)."""
         if self._pending_hover_pos is None:
@@ -2058,6 +2151,27 @@ class ShotViewerWidget(QWidget):
                 ex, ey = float(event.pos[0]), float(event.pos[1])
                 if ((ex - sp[0]) ** 2 + (ey - sp[1]) ** 2) ** 0.5 < 5:
                     self._clear_ruler()
+
+        # Right-click on a stripe → emit menu signal
+        if event.button == 2 and self._stripe_aabbs:
+            sp = getattr(self, '_right_click_start_px', None)
+            if sp is not None:
+                ex, ey = float(event.pos[0]), float(event.pos[1])
+                if ((ex - sp[0]) ** 2 + (ey - sp[1]) ** 2) ** 0.5 < 5:
+                    hovered = []
+                    try:
+                        tr = self._canvas.scene.node_transform(self._visual_root)
+                        pos3 = tr.map([ex, ey, 0, 1])
+                        data_x, data_y = pos3[0], pos3[1]
+                        hovered = [i for i, (x0, y0, x1, y1) in enumerate(self._stripe_aabbs)
+                                   if x0 <= data_x <= x1 and y0 <= data_y <= y1]
+                    except Exception:
+                        pass
+                    if hovered:
+                        global_pos = self._canvas.native.mapToGlobal(QPoint(int(ex), int(ey)))
+                        self.stripe_right_clicked.emit(hovered, global_pos)
+                        event.handled = True
+                        return
 
         if self._rotating:
             self._rotating = False

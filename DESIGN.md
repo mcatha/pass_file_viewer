@@ -521,7 +521,7 @@ Fields: total shots in file, visible (viewport-culled), active stride, rendered 
 
 **View → Wafer Outline** provides a submenu of standard wafer diameters: None, 2" (51 mm), 4" (100 mm), 5" (125 mm), 6" (150 mm), 8" (200 mm), 12" (300 mm), 18" (450 mm). Selecting a size draws a circle of that diameter centered on the wafer origin (0, 0 in absolute coordinates). The circle uses a 256-segment `visuals.Line` with colour `(1.0, 0.2, 0.2, 0.9)` (red). The outline repositions automatically when new data is loaded (since the centroid shift changes). Selecting "None" hides the circle.
 
-### Stripe region hover
+### Stripe region hover and file selection
 
 When pass files are loaded, the viewer stores each file's stripe rectangle metadata (origin, width, length). When the user hovers inside a stripe's bounding box, a yellow rectangle outline appears around that stripe's region and a tooltip displays:
 
@@ -530,6 +530,12 @@ When pass files are loaded, the viewer stores each file's stripe rectangle metad
 - SubField height, overlap
 
 The tooltip anchors to the rectangle's top-right corner. If the user zooms in so the rectangle boundary is off-screen, the tooltip moves to the lower-right corner of the canvas. Only one stripe rectangle is shown at a time — the one under the cursor. The rectangle uses a single reusable `visuals.Rectangle` that is repositioned on hover.
+
+**Right-click file selection:** A right-click (small drag) while hovering over one or more stripe regions opens a context menu. Each hovered file's name appears as a checkable item. Checking a file:
+1. Selects all its shots (equivalent to rubber-band box-selecting the entire stripe) — pushed to the viewer via `select_shots()` and displayed with green overlay markers and the selection side-pane.
+2. Pins the file's boundary rectangle and metadata label permanently in the scene (cyan border), so they remain visible even when the cursor moves away.
+
+Unchecking a file removes its shots from the selection and unpins its boundary. Multiple files can be selected simultaneously; their shot index ranges are concatenated. `MainWindow` tracks the set of file-selected file indices in `_file_selected`. Pinned visuals use separate `visuals.Rectangle` instances (one per pinned file) stored in `_pinned_stripes`. Pinned metadata labels are repositioned on every camera change.
 
 ### Coordinate readout
 
