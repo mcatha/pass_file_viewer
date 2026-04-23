@@ -185,6 +185,12 @@ class _ArgsortWorker(QObject):
         self._priority = priority
 
     def run(self) -> None:
+        # argsort on N>500M costs ~4+ GiB of RAM for int64 indices while
+        # providing no visible benefit (render budget is ~500K, stride ~1000+).
+        # Emit None to let _priority_indices fall back to uniform stride.
+        if len(self._priority) > 500_000_000:
+            self.finished.emit(None)
+            return
         result = np.argsort(self._priority).astype(np.intp)
         self.finished.emit(result)
 
