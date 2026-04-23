@@ -11,6 +11,7 @@ import numpy as np
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QAction
 from PyQt6.QtWidgets import (
+    QApplication,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -238,6 +239,7 @@ class SelectionPane(QWidget):
         self._pending_count = total
         self._header_label.setText(f"Selection  ({total:,} shots)  —  loading…")
         self._model.clear()
+        QApplication.processEvents()  # repaint before background thread result arrives
         thread = QThread(self)
         worker = _SortWorker(indices)
         worker.moveToThread(thread)

@@ -44,7 +44,6 @@ _MIN_BOX_SEL_PX = 4  # minimum box-selection marker size in screen pixels
 _RUBBER_BAND_PEN = QColor(100, 200, 255, 200)
 _RUBBER_BAND_FILL = QColor(100, 200, 255, 40)
 _BG_COLOR = "#1e1e1e"
-_BOX_SEL_VIEWPORT_CULL_MAX = 1_000_000  # above this, skip per-frame viewport cull
 _PINNED_STRIPE_LABEL_STYLE = (
     "background-color: rgba(20, 50, 40, 230);"
     "color: #7fffcf;"
@@ -2551,41 +2550,25 @@ class ShotViewerWidget(QWidget):
         if len(idx_arr) == 0 or self._positions is None:
             return
 
-        if self._locked_indices is not None:
-            # For locked (file-selected) indices: show only the currently-rendered
-            # shots that belong to the locked set so the overlay matches render density.
-            rendered = self._rendered_indices
-            if rendered is None or len(rendered) == 0:
-                return
-            lo, hi = int(idx_arr[0]), int(idx_arr[-1])
-            if len(idx_arr) == hi - lo + 1:
-                # Contiguous range (single-file): fast range check
-                mask = (rendered >= lo) & (rendered <= hi)
-            else:
-                # Multi-file union: set membership test
-                mask = np.isin(rendered, idx_arr, assume_unique=True)
-            idx_arr = rendered[mask]
-            if len(idx_arr) == 0:
-                self._box_sel_markers.set_data(np.empty((0, 2)))
-                return
-            # No stride — rendered_indices are already the right density
-            sub = idx_arr
+        rendered = self._rendered_indices
+        if rendered is None or len(rendered) == 0:
+            return
+
+        # Filter rendered indices to those in the selection.
+        # Rendered is already decimated to the right visual density.
+        lo, hi = int(idx_arr[0]), int(idx_arr[-1])
+        if len(idx_arr) == hi - lo + 1:
+            # Contiguous range: fast bounds check
+            mask = (rendered >= lo) & (rendered <= hi)
         else:
-            if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX:
-                # Small selection: viewport-cull so we only upload on-screen markers
-                bounds = self._get_viewport_bounds()
-                if bounds is not None:
-                    xmin, xmax, ymin, ymax = bounds
-                    mx = (xmax - xmin) * 0.05
-                    my = (ymax - ymin) * 0.05
-                    sel_pos = self._positions[idx_arr]
-                    vis = ((sel_pos[:, 0] >= xmin - mx) & (sel_pos[:, 0] <= xmax + mx) &
-                           (sel_pos[:, 1] >= ymin - my) & (sel_pos[:, 1] <= ymax + my))
-                    idx_arr = idx_arr[vis]
-                if len(idx_arr) == 0:
-                    self._box_sel_markers.set_data(np.empty((0, 2)))
-                    return
-            sub = idx_arr
+            mask = np.isin(rendered, idx_arr, assume_unique=True)
+        sub = rendered[mask]
+
+        if len(sub) == 0:
+            self._box_sel_markers.set_data(np.empty((0, 2)))
+            return
+
+        if self._locked_indices is None:
             dpp = self._get_data_per_px() or 1.0
             dpp_bucket = int(round(_math.log2(max(dpp, 1e-10)) * 4))
             cache_key = (id(self._box_selected_indices), dpp_bucket)
