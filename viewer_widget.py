@@ -1163,6 +1163,10 @@ class ShotViewerWidget(QWidget):
             self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
             self._lines_data_set = True
 
+        # Recompute stride/alpha for the current camera — _upload_all_shots uses a
+        # static initial stride and doesn't know the zoom level.
+        self._shot_decim_timer.start()
+
         _t2 = _time.perf_counter()
         n_total = len(self._all_positions)
         print(f"[append] prep: {(_t1-_t0)*1000:.0f}ms  upload: {(_t2-_t1)*1000:.0f}ms  "
