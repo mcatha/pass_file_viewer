@@ -658,8 +658,8 @@ class ShotViewerWidget(QWidget):
         self._wafer_diameter_nm: float | None = None
         self._wafer_outline = visuals.Line(
             pos=np.zeros((2, 2), dtype=np.float64),
-            color=(1.0, 0.2, 0.2, 0.9), width=1, connect='strip',
-            parent=self._visual_root,
+            color=(1.0, 0.2, 0.2, 0.9), width=3, connect='strip',
+            antialias=True, parent=self._visual_root,
         )
         self._wafer_outline.visible = False
         # Layout
