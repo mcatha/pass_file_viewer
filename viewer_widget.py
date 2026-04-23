@@ -1012,6 +1012,15 @@ class ShotViewerWidget(QWidget):
         self._box_sel_thread = None
         self._box_sel_worker = None
 
+    def shutdown(self) -> None:
+        """Stop all background threads.  Call before the widget is destroyed."""
+        for attr in ('_kdtree_thread', '_argsort_thread', '_box_sel_thread'):
+            t = getattr(self, attr, None)
+            if t is not None:
+                t.quit()
+                t.wait()
+                setattr(self, attr, None)
+
     def set_file_break_offsets(self, offsets: list[int]) -> None:
         """Set cumulative shot offsets (one per file) so connecting lines break at file boundaries."""
         self._file_break_offsets = offsets

@@ -962,6 +962,14 @@ class MainWindow(QMainWindow):
         self._parse_thread = None
         self._parse_worker = None
 
+    def closeEvent(self, event) -> None:
+        if self._parse_thread is not None:
+            self._parse_thread.quit()
+            self._parse_thread.wait()
+        self._viewer.shutdown()
+        self._selection_pane.shutdown()
+        super().closeEvent(event)
+
     def _on_parse_finished(self, result, extra) -> None:
         """Called when background file parsing completes."""
         QApplication.restoreOverrideCursor()

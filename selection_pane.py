@@ -228,6 +228,14 @@ class SelectionPane(QWidget):
         self._sort_thread = None
         self._sort_worker = None
 
+    def shutdown(self) -> None:
+        """Stop any running background thread.  Call before the widget is destroyed."""
+        if self._sort_thread is not None:
+            self._sort_thread.quit()
+            self._sort_thread.wait()
+            self._sort_thread = None
+            self._sort_worker = None
+
     # ── clipboard helpers ───────────────────────────────────────────
 
     def _rows_to_text(self, rows: list[int]) -> str:
