@@ -44,18 +44,28 @@ class _SortWorker(QObject):
 class _ShotTableModel(QAbstractTableModel):
     """Virtual table model — only formats data for rows Qt actually renders."""
 
-    _COLUMNS = ("Shot #", "X (nm)", "Y (nm)", "Dwell (ns)")
+    _COLUMNS = ("Shot #", "File", "X (nm)", "Y (nm)", "Dwell (ns)")
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._indices: np.ndarray = np.empty(0, dtype=np.intp)  # sorted shot indices
         self._data: PassData | None = None
+        self._file_offsets: np.ndarray = np.array([0], dtype=np.intp)  # start index per file
+        self._file_names: list[str] = [""]
 
     def set_sorted(self, data: PassData | None, indices: np.ndarray) -> None:
         self.beginResetModel()
         self._data = data
         self._indices = indices
         self.endResetModel()
+
+    def set_file_boundaries(self, names: list[str], counts: list[int]) -> None:
+        """Set per-file name and shot count so Shot # and File columns work correctly."""
+        offsets = [0]
+        for c in counts[:-1]:
+            offsets.append(offsets[-1] + c)
+        self._file_offsets = np.array(offsets, dtype=np.intp)
+        self._file_names = list(names)
 
     def clear(self) -> None:
         self.beginResetModel()
@@ -83,12 +93,17 @@ class _ShotTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             if col == 0:
-                return f"{idx + 1:,}"
+                file_idx = int(np.searchsorted(self._file_offsets, idx + 1, side='right') - 1)
+                shot_num = idx - int(self._file_offsets[file_idx]) + 1
+                return f"{shot_num:,}"
             elif col == 1:
-                return f"{self._data.x[idx]:,.0f}"
+                file_idx = int(np.searchsorted(self._file_offsets, idx + 1, side='right') - 1)
+                return self._file_names[file_idx] if file_idx < len(self._file_names) else ""
             elif col == 2:
-                return f"{self._data.y[idx]:,.0f}"
+                return f"{self._data.x[idx]:,.0f}"
             elif col == 3:
+                return f"{self._data.y[idx]:,.0f}"
+            elif col == 4:
                 return f"{self._data.dwell[idx]:,.0f}"
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
@@ -154,6 +169,10 @@ class SelectionPane(QWidget):
     def set_data(self, data: PassData) -> None:
         """Store reference to the loaded pass data."""
         self._data = data
+
+    def set_file_boundaries(self, names: list[str], counts: list[int]) -> None:
+        """Update per-file name/count info so Shot # and File columns are correct."""
+        self._model.set_file_boundaries(names, counts)
 
     def update_selection(self, indices: list[int]) -> None:
         """Populate the table with the given shot indices (0-based), sorted by shot number."""

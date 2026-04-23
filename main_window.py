@@ -900,6 +900,10 @@ class MainWindow(QMainWindow):
 
         self._viewer.load_data(merged, keep_origin=_incremental)
         self._selection_pane.set_data(merged)
+        self._selection_pane.set_file_boundaries(
+            [str(p.name) for _, p in self._loaded_files],
+            [d.count for d, _ in self._loaded_files],
+        )
 
         # Stripe region metadata
         regions = []
@@ -986,6 +990,10 @@ class MainWindow(QMainWindow):
 
         self._viewer.load_data(merged, keep_origin=_incremental)
         self._selection_pane.set_data(merged)
+        self._selection_pane.set_file_boundaries(
+            [str(p.name) for _, p in self._loaded_files],
+            [d.count for d, _ in self._loaded_files],
+        )
 
         # Pass stripe region metadata for hover rectangles
         regions = []
