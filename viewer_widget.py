@@ -2378,9 +2378,8 @@ class ShotViewerWidget(QWidget):
         if len(idx_arr) == 0 or self._positions is None:
             return
 
-        # Viewport-cull small selections — but skip culling for locked (file-selected)
-        # indices so all file shots remain highlighted regardless of current view.
-        if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX and self._locked_indices is None:
+        if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX:
+            # Small selection: viewport-cull so we only upload on-screen markers
             bounds = self._get_viewport_bounds()
             if bounds is not None:
                 xmin, xmax, ymin, ymax = bounds
@@ -2398,11 +2397,14 @@ class ShotViewerWidget(QWidget):
         stride = max(1, len(idx_arr) // 500_000)
         sub = idx_arr[::stride]
 
-        # Skip re-upload if the selection and stride haven't changed
-        cache_key = (id(self._box_selected_indices), stride)
-        if cache_key == getattr(self, '_box_sel_cache_key', None):
-            return
-        self._box_sel_cache_key = cache_key
+        # Skip re-upload if the selection and stride haven't changed.
+        # For locked (file-selected) indices bypass the cache so viewport-culled
+        # markers refresh correctly as the camera moves.
+        if self._locked_indices is None:
+            cache_key = (id(self._box_selected_indices), stride)
+            if cache_key == getattr(self, '_box_sel_cache_key', None):
+                return
+            self._box_sel_cache_key = cache_key
 
         box_sz = self._uniform_size if self._uniform_size is not None else self._sizes[sub]
         self._box_sel_markers.set_data(
