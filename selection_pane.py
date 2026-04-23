@@ -224,7 +224,7 @@ class SelectionPane(QWidget):
             self._sort_thread = None
             self._sort_worker = None
 
-        _DISPLAY_LIMIT = 50_000
+        _DISPLAY_LIMIT = 5_000_000
         if total > _DISPLAY_LIMIT:
             self._current_indices = np.empty(0, dtype=np.intp)
             self._pending_count = total
@@ -232,7 +232,9 @@ class SelectionPane(QWidget):
             self._model.clear()
             return
 
-        if (total == len(self._current_indices)
+        # Dedup check: skip the O(N log N) sort on the main thread for large selections
+        if (total < 100_000
+                and total == len(self._current_indices)
                 and np.array_equal(np.sort(arr), self._current_indices)):
             return  # identical selection — skip the clear/re-sort flash
 
