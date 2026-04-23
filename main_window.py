@@ -163,6 +163,11 @@ class MainWindow(QMainWindow):
         # View menu
         view_menu = menu_bar.addMenu("&View")
 
+        reset_act = QAction("&Reset View", self)
+        reset_act.setShortcut(QKeySequence("Ctrl+R"))
+        reset_act.triggered.connect(self._viewer.reset_view)
+        view_menu.addAction(reset_act)
+
         self._lines_act = QAction("Show Shot &Connections", self)
         self._lines_act.setCheckable(True)
         self._lines_act.setChecked(False)
@@ -170,10 +175,30 @@ class MainWindow(QMainWindow):
         self._lines_act.toggled.connect(self._on_toggle_lines)
         view_menu.addAction(self._lines_act)
 
-        reset_act = QAction("&Reset View", self)
-        reset_act.setShortcut(QKeySequence("Ctrl+R"))
-        reset_act.triggered.connect(self._viewer.reset_view)
-        view_menu.addAction(reset_act)
+        # ── Wafer Outline submenu ─────────────────────────────────
+        _WAFER_SIZES: list[tuple[int | None, str]] = [
+            (None,          "None"),
+            (51_000_000,    '2" (51 mm)'),
+            (100_000_000,   '4" (100 mm)'),
+            (125_000_000,   '5" (125 mm)'),
+            (150_000_000,   '6" (150 mm)'),
+            (200_000_000,   '8" (200 mm)'),
+            (300_000_000,   '12" (300 mm)'),
+            (450_000_000,   '18" (450 mm)'),
+        ]
+        wafer_menu = view_menu.addMenu("&Wafer Outline")
+        self._wafer_group = QActionGroup(self)
+        self._wafer_group.setExclusive(True)
+        self._wafer_actions: list[tuple[QAction, int | None]] = []
+        for diameter, label in _WAFER_SIZES:
+            act = QAction(label, self)
+            act.setCheckable(True)
+            if diameter is None:
+                act.setChecked(True)
+            self._wafer_group.addAction(act)
+            wafer_menu.addAction(act)
+            self._wafer_actions.append((act, diameter))
+        self._wafer_group.triggered.connect(self._on_wafer_outline_select)
 
         view_menu.addSeparator()
 
@@ -235,31 +260,6 @@ class MainWindow(QMainWindow):
         mode_menu.addAction(self._gauss_mode_act)
 
         self._mode_group.triggered.connect(self._on_marker_mode_select)
-
-        # ── Wafer Outline submenu ─────────────────────────────────
-        _WAFER_SIZES: list[tuple[int | None, str]] = [
-            (None,          "None"),
-            (51_000_000,    '2" (51 mm)'),
-            (100_000_000,   '4" (100 mm)'),
-            (125_000_000,   '5" (125 mm)'),
-            (150_000_000,   '6" (150 mm)'),
-            (200_000_000,   '8" (200 mm)'),
-            (300_000_000,   '12" (300 mm)'),
-            (450_000_000,   '18" (450 mm)'),
-        ]
-        wafer_menu = view_menu.addMenu("&Wafer Outline")
-        self._wafer_group = QActionGroup(self)
-        self._wafer_group.setExclusive(True)
-        self._wafer_actions: list[tuple[QAction, int | None]] = []
-        for diameter, label in _WAFER_SIZES:
-            act = QAction(label, self)
-            act.setCheckable(True)
-            if diameter is None:
-                act.setChecked(True)
-            self._wafer_group.addAction(act)
-            wafer_menu.addAction(act)
-            self._wafer_actions.append((act, diameter))
-        self._wafer_group.triggered.connect(self._on_wafer_outline_select)
 
         view_menu.addSeparator()
 
