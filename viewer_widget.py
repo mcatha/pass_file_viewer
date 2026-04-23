@@ -1252,7 +1252,6 @@ class ShotViewerWidget(QWidget):
             if sc is None:
                 continue
             cx, cy = float(sc[0]), float(sc[1])
-            print(f"[fid] {name}: data=({x_nm - self._origin[0]:.0f}, {y_nm - self._origin[1]:.0f}) screen=({cx:.1f}, {cy:.1f})")
             if -margin <= cx <= cw + margin and -margin <= cy <= ch + margin:
                 markers.append((cx, cy, arm_px, circle_px, name))
 
