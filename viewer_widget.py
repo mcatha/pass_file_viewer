@@ -644,6 +644,7 @@ class ShotViewerWidget(QWidget):
         self._rotation_deg: float = 0.0
         self._selected_idx: int | None = None       # currently selected shot index
         self._box_selected_indices: np.ndarray = np.empty(0, dtype=np.intp)  # box-selected shot indices
+        self._locked_indices: np.ndarray | None = None  # file-selected indices; immune to click/box clear
         self._lines_data_set: bool = False           # True once line data is uploaded
 
         self._all_positions: np.ndarray | None = None  # full (N,2) float32
@@ -2007,7 +2008,7 @@ class ShotViewerWidget(QWidget):
         )
         label.adjustSize()
         self._pinned_stripes[idx] = (rect, label)
-        self._position_pinned_label(idx)
+        self._position_pinned_labels()
         label.setVisible(True)
         self._canvas.update()
 
@@ -2029,33 +2030,63 @@ class ShotViewerWidget(QWidget):
     def is_stripe_pinned(self, idx: int) -> bool:
         return idx in self._pinned_stripes
 
-    def _position_pinned_label(self, idx: int) -> None:
-        """Position a single pinned stripe label near its AABB corner."""
-        if idx not in self._pinned_stripes:
+    def _position_pinned_labels(self) -> None:
+        """Reposition all pinned stripe labels without overlap."""
+        if not self._pinned_stripes:
             return
-        _, label = self._pinned_stripes[idx]
-        aabb = self._stripe_aabbs[idx]
-        tr_corner = np.array([aabb[2], aabb[3]], dtype=np.float64)
-        screen = self._data_to_canvas(tr_corner)
         cw = self._canvas.native.width()
         ch = self._canvas.native.height()
-        tw, th = label.width(), label.height()
         pad = 10
-        if (screen is not None
-                and 0 <= screen[0] + pad + tw <= cw
-                and 0 <= screen[1] - th - pad <= ch):
-            label.move(int(screen[0]) + pad, int(screen[1]) - th - pad)
-        else:
-            label.move(cw - tw - pad, ch - th - pad)
 
-    def _position_pinned_labels(self) -> None:
-        """Reposition all pinned stripe labels (called on camera change)."""
+        # Compute natural position for each label (preferred anchor: top-right of AABB)
+        entries: list[tuple[int, int, int, int]] = []  # (natural_y, x, w, h)  per label
+        labels: list[QLabel] = []
         for idx in self._pinned_stripes:
-            self._position_pinned_label(idx)
+            _, label = self._pinned_stripes[idx]
+            aabb = self._stripe_aabbs[idx]
+            tr_corner = np.array([aabb[2], aabb[3]], dtype=np.float64)
+            screen = self._data_to_canvas(tr_corner)
+            tw, th = label.width(), label.height()
+            if screen is not None and 0 <= screen[0] + pad + tw <= cw:
+                nat_x = int(screen[0]) + pad
+                nat_y = int(screen[1]) - th - pad
+            else:
+                nat_x = cw - tw - pad
+                nat_y = ch - th - pad
+            entries.append((nat_y, nat_x, tw, th))
+            labels.append(label)
+
+        # Sort by natural y so we stack from top to bottom
+        order = sorted(range(len(entries)), key=lambda i: entries[i][0])
+
+        placed: list[tuple[int, int, int, int]] = []  # (x, y, w, h) of placed labels
+        for i in order:
+            nat_y, x, w, h = entries[i]
+            y = nat_y
+            # Push down past any label we'd overlap
+            changed = True
+            while changed:
+                changed = False
+                for px, py, pw, ph in placed:
+                    # Axis-aligned overlap check
+                    if x < px + pw and x + w > px and y < py + ph and y + h > py:
+                        y = py + ph + pad
+                        changed = True
+            # Clamp to canvas bounds
+            y = max(0, min(y, ch - h))
+            labels[i].move(x, y)
+            placed.append((x, y, w, h))
 
     def select_shots(self, indices: np.ndarray) -> None:
         """Public entry point to set the box selection to exactly these indices."""
         self._apply_box_selection(indices)
+
+    def set_locked_indices(self, indices: np.ndarray | None) -> None:
+        """Set indices that are immune to click/box deselection (file-selected shots).
+        Pass None or an empty array to unlock."""
+        if indices is not None and len(indices) == 0:
+            indices = None
+        self._locked_indices = indices
 
     def _do_hover_query(self) -> None:
         """Perform the actual KD-tree hover lookup (throttled)."""
@@ -2257,8 +2288,8 @@ class ShotViewerWidget(QWidget):
 
     def _handle_click_select(self, event) -> None:
         """Select or deselect a shot on click."""
-        # Clear any box selection first
-        if len(self._box_selected_indices):
+        # Clear any box selection first, unless locked (file-selected) indices protect it
+        if len(self._box_selected_indices) and self._locked_indices is None:
             self.clear_box_selection()
 
         if self._kdtree is None or self._data is None or self._positions is None:
