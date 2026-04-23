@@ -508,7 +508,7 @@ class ShotViewerWidget(QWidget):
         self._ruler_ticks.visible = False
 
         # Overlay markers for box-selected shots — disc versions
-        self._disc_box_sel_markers = visuals.Markers(parent=self._visual_root, antialias=5,
+        self._disc_box_sel_markers = visuals.Markers(parent=self._visual_root, antialias=2,
                                               scaling='scene', symbol='disc',
                                               method='instanced')
         self._disc_box_sel_markers.set_gl_state('translucent', depth_test=False)
@@ -518,7 +518,7 @@ class ShotViewerWidget(QWidget):
         self._disc_box_sel_markers.visible = False
 
         # Overlay markers for box-selected shots — Gaussian versions
-        self._gauss_box_sel_markers = GaussianMarkers(parent=self._visual_root, antialias=5,
+        self._gauss_box_sel_markers = GaussianMarkers(parent=self._visual_root, antialias=2,
                                               scaling='scene', symbol='disc',
                                               method='instanced')
         self._gauss_box_sel_markers.set_gl_state('translucent', depth_test=False)
