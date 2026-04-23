@@ -831,6 +831,7 @@ class ShotViewerWidget(QWidget):
         if self._argsort_worker is not None:
             self._argsort_worker.finished.disconnect(self._on_argsort_ready)
             self._argsort_thread.quit()
+            self._argsort_thread.wait()
         argsort_thread = QThread(self)
         argsort_worker = _ArgsortWorker(priority)
         argsort_worker.moveToThread(argsort_thread)
@@ -2450,6 +2451,7 @@ class ShotViewerWidget(QWidget):
             if self._box_sel_worker is not None:
                 self._box_sel_worker.finished.disconnect(self._on_box_sel_ready)
                 self._box_sel_thread.quit()
+                self._box_sel_thread.wait()
             thread = QThread(self)
             worker = _BoxSelWorker(self._positions, quad)
             worker.moveToThread(thread)

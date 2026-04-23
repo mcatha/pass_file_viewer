@@ -223,6 +223,7 @@ class SelectionPane(QWidget):
         if self._sort_worker is not None:
             self._sort_worker.finished.disconnect(self._on_sort_ready)
             self._sort_thread.quit()
+            self._sort_thread.wait()
         thread = QThread(self)
         worker = _SortWorker(indices)
         worker.moveToThread(thread)
