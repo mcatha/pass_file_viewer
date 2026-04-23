@@ -940,10 +940,14 @@ class ShotViewerWidget(QWidget):
         # _priority_indices falls back to argpartition until it's ready.
         self._priority_sorted = None
         if self._argsort_worker is not None:
-            self._argsort_worker.finished.disconnect(self._on_argsort_ready)
-            self._argsort_thread.finished.disconnect(self._on_argsort_thread_done)
-            self._argsort_thread.quit()
-            self._cancelling_threads.append(self._argsort_thread)
+            try:
+                self._argsort_worker.finished.disconnect(self._on_argsort_ready)
+                self._argsort_thread.finished.disconnect(self._on_argsort_thread_done)
+            except RuntimeError:
+                pass
+            if self._argsort_thread.isRunning():
+                self._argsort_thread.quit()
+                self._cancelling_threads.append(self._argsort_thread)
             # No wait() — thread finishes on its own; signals already disconnected
             # so stale results won't be applied and new thread refs won't be nulled.
         argsort_thread = QThread(self)
@@ -1128,10 +1132,14 @@ class ShotViewerWidget(QWidget):
         # ── Re-sort priorities on background thread ──────────────────────────
         self._priority_sorted = None
         if self._argsort_worker is not None:
-            self._argsort_worker.finished.disconnect(self._on_argsort_ready)
-            self._argsort_thread.finished.disconnect(self._on_argsort_thread_done)
-            self._argsort_thread.quit()
-            self._cancelling_threads.append(self._argsort_thread)
+            try:
+                self._argsort_worker.finished.disconnect(self._on_argsort_ready)
+                self._argsort_thread.finished.disconnect(self._on_argsort_thread_done)
+            except RuntimeError:
+                pass
+            if self._argsort_thread.isRunning():
+                self._argsort_thread.quit()
+                self._cancelling_threads.append(self._argsort_thread)
             # No wait() — thread finishes on its own; signals already disconnected
             # so stale results won't be applied and new thread refs won't be nulled.
         argsort_thread = QThread(self)
@@ -1310,10 +1318,17 @@ class ShotViewerWidget(QWidget):
     def _build_kdtree_async(self, positions: np.ndarray, rendered_indices: np.ndarray | None) -> None:
         """Build the KD-tree on a worker thread."""
         if self._kdtree_thread is not None:
-            self._kdtree_worker.finished.disconnect(self._on_kdtree_ready)
-            self._kdtree_thread.finished.disconnect(self._on_kdtree_thread_done)
-            self._kdtree_thread.quit()
-            self._cancelling_threads.append(self._kdtree_thread)
+            try:
+                self._kdtree_worker.finished.disconnect(self._on_kdtree_ready)
+            except RuntimeError:
+                pass  # worker already deleted (deleteLater fired before _on_kdtree_thread_done)
+            try:
+                self._kdtree_thread.finished.disconnect(self._on_kdtree_thread_done)
+            except RuntimeError:
+                pass
+            if self._kdtree_thread.isRunning():
+                self._kdtree_thread.quit()
+                self._cancelling_threads.append(self._kdtree_thread)
         self._kdtree = None
         self._kdtree_indices = None
         thread = QThread(self)
@@ -1337,26 +1352,27 @@ class ShotViewerWidget(QWidget):
         self.kdtree_ready.emit()
 
     def _on_kdtree_thread_done(self) -> None:
-        """Called when the KD-tree thread has fully stopped."""
-        self._kdtree_thread = None
-        self._kdtree_worker = None
+        if self.sender() is self._kdtree_thread:
+            self._kdtree_thread = None
+            self._kdtree_worker = None
 
     def _on_argsort_ready(self, result: np.ndarray) -> None:
         """Called when background argsort completes."""
         self._priority_sorted = result
 
     def _on_argsort_thread_done(self) -> None:
-        """Called when the argsort thread has fully stopped."""
-        self._argsort_thread = None
-        self._argsort_worker = None
+        if self.sender() is self._argsort_thread:
+            self._argsort_thread = None
+            self._argsort_worker = None
 
     def _on_box_sel_ready(self, indices: np.ndarray) -> None:
         QApplication.restoreOverrideCursor()
         self._apply_box_selection(indices)
 
     def _on_box_sel_thread_done(self) -> None:
-        self._box_sel_thread = None
-        self._box_sel_worker = None
+        if self.sender() is self._box_sel_thread:
+            self._box_sel_thread = None
+            self._box_sel_worker = None
 
     def shutdown(self) -> None:
         """Stop all background threads and timers.  Call before the widget is destroyed."""
@@ -2791,10 +2807,14 @@ class ShotViewerWidget(QWidget):
 
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             if self._box_sel_worker is not None:
-                self._box_sel_worker.finished.disconnect(self._on_box_sel_ready)
-                self._box_sel_thread.finished.disconnect(self._on_box_sel_thread_done)
-                self._box_sel_thread.quit()
-                self._cancelling_threads.append(self._box_sel_thread)
+                try:
+                    self._box_sel_worker.finished.disconnect(self._on_box_sel_ready)
+                    self._box_sel_thread.finished.disconnect(self._on_box_sel_thread_done)
+                except RuntimeError:
+                    pass
+                if self._box_sel_thread.isRunning():
+                    self._box_sel_thread.quit()
+                    self._cancelling_threads.append(self._box_sel_thread)
                 # No wait() — stale signals are disconnected; new refs set below
             thread = QThread(self)
             worker = _BoxSelWorker(self._positions, quad)
