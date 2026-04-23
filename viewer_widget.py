@@ -2447,8 +2447,11 @@ class ShotViewerWidget(QWidget):
 
     def _handle_click_select(self, event) -> None:
         """Select or deselect a shot on click."""
-        # Clear any box selection first, unless locked (file-selected) indices protect it
-        if len(self._box_selected_indices) and self._locked_indices is None:
+        # Clear any non-locked box selection on click.
+        # When locked, _box_selected_indices includes locked shots, so only clear
+        # if there are extras beyond the locked count.
+        locked_count = len(self._locked_indices) if self._locked_indices is not None else 0
+        if len(self._box_selected_indices) > locked_count:
             self.clear_box_selection()
 
         if self._kdtree is None or self._data is None or self._positions is None:
