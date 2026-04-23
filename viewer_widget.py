@@ -1098,6 +1098,10 @@ class ShotViewerWidget(QWidget):
         """Show each 'Shot 1' label next to its lens-flare if on-screen, hide otherwise."""
         if not self._shot1_labels or self._positions is None:
             return
+        if not self._lines.visible:
+            for lbl in self._shot1_labels:
+                lbl.setVisible(False)
+            return
         cw = self._canvas.native.width()
         ch = self._canvas.native.height()
         pad = 16   # px offset from the centre of the flare
