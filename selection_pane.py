@@ -3,6 +3,11 @@ Scrollable side-pane that lists box-selected shots in a table.
 
 Contents are easily copyable: Ctrl+A selects all rows, Ctrl+C copies to clipboard
 in tab-separated format suitable for pasting into spreadsheets.
+
+Large selections (> _MAX_VIRTUAL_ROWS) use a virtual window: Qt only ever sees
+a capped row count, avoiding the 32-bit integer overflow in QHeaderView::length()
+that causes blank cells at ~71 M rows with 30 px default section height.  An
+offset scrollbar below the table lets the user navigate the full dataset.
 """
 
 from __future__ import annotations
@@ -17,12 +22,19 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollBar,
     QAbstractItemView,
     QHeaderView,
     QTableView,
 )
 
 from pass_parser import PassData
+
+# Qt uses 32-bit int for pixel positions inside QHeaderView.  At the default
+# section height (~30 px) the product rowCount × height overflows at ~71 M rows,
+# causing the view to render nothing.  Keeping the virtual window below this
+# threshold avoids the overflow on any platform.
+_MAX_VIRTUAL_ROWS = 10_000_000   # 10 M rows × 30 px = 300 M << INT_MAX
 
 
 class _ShotTableModel(QAbstractTableModel):
@@ -36,11 +48,13 @@ class _ShotTableModel(QAbstractTableModel):
         self._data: PassData | None = None
         self._file_offsets: np.ndarray = np.array([0], dtype=np.intp)  # start index per file
         self._file_names: list[str] = [""]
+        self._offset: int = 0   # first row of the virtual window into _indices
 
     def set_sorted(self, data: PassData | None, indices: np.ndarray) -> None:
         self.beginResetModel()
         self._data = data
         self._indices = indices
+        self._offset = 0
         self.endResetModel()
 
     def set_file_boundaries(self, names: list[str], counts: list[int]) -> None:
@@ -51,9 +65,20 @@ class _ShotTableModel(QAbstractTableModel):
         self._file_offsets = np.array(offsets, dtype=np.intp)
         self._file_names = [n[:-5] if n.lower().endswith('.pass') else n for n in names]
 
+    def set_offset(self, offset: int) -> None:
+        """Slide the virtual window to start at *offset* within _indices."""
+        n = len(self._indices)
+        clamped = max(0, min(offset, max(0, n - 1)))
+        if clamped == self._offset:
+            return
+        self.beginResetModel()
+        self._offset = clamped
+        self.endResetModel()
+
     def clear(self) -> None:
         self.beginResetModel()
         self._indices = np.empty(0, dtype=np.intp)
+        self._offset = 0
         self.endResetModel()
 
     def sort(self, column: int, order=Qt.SortOrder.AscendingOrder) -> None:
@@ -84,12 +109,16 @@ class _ShotTableModel(QAbstractTableModel):
             order_arr = order_arr[::-1]
         self.beginResetModel()
         self._indices = idx[order_arr]
+        self._offset = 0
         self.endResetModel()
 
     # ── QAbstractTableModel interface ──
 
     def rowCount(self, parent=QModelIndex()):
-        return len(self._indices)
+        n = len(self._indices)
+        if n == 0:
+            return 0
+        return min(n - self._offset, _MAX_VIRTUAL_ROWS)
 
     def columnCount(self, parent=QModelIndex()):
         return len(self._COLUMNS)
@@ -106,7 +135,7 @@ class _ShotTableModel(QAbstractTableModel):
         if not index.isValid() or self._data is None:
             return None
         row, col = index.row(), index.column()
-        idx = int(self._indices[row])
+        idx = int(self._indices[self._offset + row])
 
         if role == Qt.ItemDataRole.DisplayRole:
             if col == 0:
@@ -150,7 +179,7 @@ class SelectionPane(QWidget):
         header_row.addWidget(self._header_label)
 
         copy_btn = QPushButton("Copy All")
-        copy_btn.setToolTip("Copy entire table to clipboard (tab-separated)")
+        copy_btn.setToolTip("Copy current window to clipboard (tab-separated)")
         copy_btn.setFixedWidth(80)
         copy_btn.clicked.connect(self._copy_all)
         header_row.addWidget(copy_btn)
@@ -180,6 +209,20 @@ class SelectionPane(QWidget):
         self._table.clicked.connect(self._on_row_clicked)
         layout.addWidget(self._table)
 
+        # Offset scrollbar — shown only when total rows exceed the virtual window
+        self._offset_bar = QScrollBar(Qt.Orientation.Horizontal)
+        self._offset_bar.setRange(0, 0)
+        self._offset_bar.setSingleStep(max(1, _MAX_VIRTUAL_ROWS // 100))
+        self._offset_bar.setPageStep(_MAX_VIRTUAL_ROWS)
+        self._offset_bar.valueChanged.connect(self._on_offset_changed)
+        self._offset_bar.setVisible(False)
+        layout.addWidget(self._offset_bar)
+
+        self._offset_label = QLabel("")
+        self._offset_label.setStyleSheet("font-size: 11px; color: #aaa;")
+        self._offset_label.setVisible(False)
+        layout.addWidget(self._offset_label)
+
         # Keyboard shortcut: Ctrl+C copies selected rows
         copy_act = QAction(self)
         copy_act.setShortcut(QKeySequence.StandardKey.Copy)
@@ -188,13 +231,12 @@ class SelectionPane(QWidget):
 
         self._data: PassData | None = None
         self._current_indices: np.ndarray = np.empty(0, dtype=np.intp)
+        self._total_shots: int = 0
 
     def set_data(self, data: PassData) -> None:
         """Store reference to the loaded pass data."""
         self._data = data
         self._current_indices = np.empty(0, dtype=np.intp)
-        # Sync model so any stale set_sorted(None, …) from a pre-set_data
-        # update_selection call can't leave the model with a None data pointer.
         self._model.set_sorted(data, self._current_indices)
 
     def set_file_boundaries(self, names: list[str], counts: list[int]) -> None:
@@ -222,9 +264,36 @@ class SelectionPane(QWidget):
             return
 
         self._current_indices = arr
+        self._total_shots = total
         self._header_label.setText(f"Selection  ({total:,} shots)")
         self._model.set_sorted(self._data, arr)
+        self._update_offset_bar(total)
         QTimer.singleShot(0, self._emit_content_width)
+
+    def _update_offset_bar(self, total: int) -> None:
+        overflow = total > _MAX_VIRTUAL_ROWS
+        if overflow:
+            max_offset = total - _MAX_VIRTUAL_ROWS
+            self._offset_bar.blockSignals(True)
+            self._offset_bar.setRange(0, max_offset)
+            self._offset_bar.setValue(0)
+            self._offset_bar.blockSignals(False)
+            self._offset_bar.setVisible(True)
+            self._refresh_offset_label(0, total)
+        else:
+            self._offset_bar.setVisible(False)
+            self._offset_label.setVisible(False)
+
+    def _refresh_offset_label(self, offset: int, total: int) -> None:
+        end = min(offset + _MAX_VIRTUAL_ROWS, total)
+        self._offset_label.setText(
+            f"Rows {offset + 1:,} – {end:,} of {total:,}"
+        )
+        self._offset_label.setVisible(True)
+
+    def _on_offset_changed(self, value: int) -> None:
+        self._model.set_offset(value)
+        self._refresh_offset_label(value, self._total_shots)
 
     def _emit_content_width(self) -> None:
         header = self._table.horizontalHeader()
@@ -242,8 +311,9 @@ class SelectionPane(QWidget):
 
     def _on_row_clicked(self, index) -> None:
         row = index.row()
-        if 0 <= row < len(self._model._indices):
-            self.shot_activated.emit(int(self._model._indices[row]))
+        actual = self._model._offset + row
+        if 0 <= actual < len(self._model._indices):
+            self.shot_activated.emit(int(self._model._indices[actual]))
 
     def highlight_shot(self, global_idx: int) -> None:
         """Highlight and scroll to the row for global_idx, or clear if -1."""
@@ -254,12 +324,17 @@ class SelectionPane(QWidget):
         if len(rows) == 0:
             self._table.clearSelection()
             return
-        row = int(rows[0])
-        self._table.selectRow(row)
-        self._table.scrollTo(self._model.index(row, 0))
+        actual_row = int(rows[0])
+        virtual_row = actual_row - self._model._offset
+        if not (0 <= virtual_row < self._model.rowCount()):
+            # Navigate the offset window to contain this row
+            self._offset_bar.setValue(actual_row)
+            virtual_row = 0
+        self._table.selectRow(virtual_row)
+        self._table.scrollTo(self._model.index(virtual_row, 0))
 
     def _rows_to_text(self, rows: list[int]) -> str:
-        """Convert table rows to tab-separated text with header."""
+        """Convert virtual table rows to tab-separated text with header."""
         lines = ["\t".join(self._COLUMNS)]
         model = self._model
         for r in sorted(rows):
@@ -271,7 +346,7 @@ class SelectionPane(QWidget):
         return "\n".join(lines)
 
     def _copy_all(self) -> None:
-        """Copy entire table to clipboard."""
+        """Copy current window to clipboard."""
         row_count = self._model.rowCount()
         if row_count:
             text = self._rows_to_text(list(range(row_count)))
