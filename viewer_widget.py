@@ -421,6 +421,9 @@ class ShotViewerWidget(QWidget):
     # Emitted on right-click over a stripe.  Carries (list[int] stripe indices, QPoint global pos).
     stripe_right_clicked = pyqtSignal(list, object)
 
+    # Emitted when a single shot is click-selected (-1 means deselected).
+    shot_clicked = pyqtSignal(int)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
@@ -2211,6 +2214,43 @@ class ShotViewerWidget(QWidget):
         """Public entry point to set the box selection to exactly these indices."""
         self._apply_box_selection(indices)
 
+    def click_select_shot(self, idx: int) -> None:
+        """Programmatically click-select a shot by its global index (e.g. from the selection pane)."""
+        if self._data is None:
+            return
+        if idx < 0 or idx >= self._data.count:
+            return
+        if self._selected_idx is not None:
+            self._sel_marker.visible = False
+        self._selected_idx = idx
+        self._hover_tooltip.setVisible(False)
+        sel_sz = self._uniform_size if self._uniform_size is not None else self._sizes[idx:idx+1]
+        self._sel_marker.set_data(
+            self._positions[idx:idx+1],
+            size=self._sel_size(sel_sz),
+            face_color=_SELECTED_COLOR,
+            edge_width=0,
+        )
+        self._sel_marker.visible = True
+        self._update_sel_lines()
+        shot_num = idx + 1
+        sx = self._data.x[idx]
+        sy = self._data.y[idx]
+        sd = self._data.dwell[idx]
+        tip = (
+            f"Shot #{shot_num:,}\n"
+            f"X: {sx:,.0f} nm   Y: {sy:,.0f} nm\n"
+            f"Dwell: {sd:,.0f} ns"
+        )
+        self._tooltip.setText(tip)
+        self._tooltip.adjustSize()
+        screen_pos = self._data_to_canvas(self._positions[idx])
+        if screen_pos is not None:
+            self._tooltip.move(int(screen_pos[0]) + 20, int(screen_pos[1]) - self._tooltip.height() - 10)
+        self._tooltip.setVisible(True)
+        self.box_selected.emit(self._box_selected_indices if self._locked_indices is not None else [idx])
+        self._canvas.update()
+
     def set_locked_indices(self, indices: np.ndarray | None) -> None:
         """Set indices that are immune to click/box deselection (file-selected shots).
         Pass None or an empty array to unlock."""
@@ -2458,18 +2498,16 @@ class ShotViewerWidget(QWidget):
                 self._tooltip.setVisible(False)
                 self._hover_tooltip.setVisible(False)
                 self.box_selected.emit(self._box_selected_indices if self._locked_indices is not None else [])
+                self.shot_clicked.emit(-1)
             else:
                 # Select new shot
                 self._selected_idx = idx
                 self._hover_tooltip.setVisible(False)
                 # Show selected shot as overlay on top
                 sel_sz = self._uniform_size if self._uniform_size is not None else self._sizes[idx:idx+1]
-                computed_sel = self._sel_size(sel_sz)
-                dpp = self._get_data_per_px()
-                print(f"[SEL] raw_sz={sel_sz} sel_sz={computed_sel} dpp={dpp} stride={self._decim_stride} mode={self._marker_mode}")
                 self._sel_marker.set_data(
                     self._positions[idx:idx+1],
-                    size=computed_sel,
+                    size=self._sel_size(sel_sz),
                     face_color=_SELECTED_COLOR,
                     edge_width=0,
                 )
@@ -2492,6 +2530,7 @@ class ShotViewerWidget(QWidget):
                     self._tooltip.move(int(screen_pos[0]) + 20, int(screen_pos[1]) - self._tooltip.height() - 10)
                 self._tooltip.setVisible(True)
                 self.box_selected.emit(self._box_selected_indices if self._locked_indices is not None else [idx])
+                self.shot_clicked.emit(idx)
         else:
             # Clicked empty space → deselect
             self._selected_idx = None
@@ -2500,6 +2539,7 @@ class ShotViewerWidget(QWidget):
             self._tooltip.setVisible(False)
             self._hover_tooltip.setVisible(False)
             self.box_selected.emit(self._box_selected_indices if self._locked_indices is not None else [])
+            self.shot_clicked.emit(-1)
 
         self._canvas.update()
         event.handled = True

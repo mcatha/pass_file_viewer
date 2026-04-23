@@ -113,6 +113,9 @@ class MainWindow(QMainWindow):
         self._viewer.kdtree_ready.connect(self._on_kdtree_ready)
         # Connect stripe right-click signal
         self._viewer.stripe_right_clicked.connect(self._on_stripe_right_clicked)
+        # Two-way click-select ↔ selection pane row highlight
+        self._viewer.shot_clicked.connect(self._selection_pane.highlight_shot)
+        self._selection_pane.shot_activated.connect(self._viewer.click_select_shot)
         # Background parse thread state
         self._parse_thread: QThread | None = None
         self._parse_worker: _ParseWorker | None = None

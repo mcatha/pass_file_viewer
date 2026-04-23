@@ -144,6 +144,7 @@ class SelectionPane(QWidget):
 
     _COLUMNS = _ShotTableModel._COLUMNS
     content_ready = pyqtSignal(int)   # emits required pixel width after data loads
+    shot_activated = pyqtSignal(int)  # emits global shot index when a row is clicked
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -185,6 +186,7 @@ class SelectionPane(QWidget):
             "QTableView { font-family: Consolas, monospace; font-size: 12px; }"
             "QTableView::item { padding: 2px 6px; }"
         )
+        self._table.clicked.connect(self._on_row_clicked)
         layout.addWidget(self._table)
 
         # Keyboard shortcut: Ctrl+C copies selected rows
@@ -260,6 +262,24 @@ class SelectionPane(QWidget):
             self._sort_worker = None
 
     # ── clipboard helpers ───────────────────────────────────────────
+
+    def _on_row_clicked(self, index) -> None:
+        row = index.row()
+        if 0 <= row < len(self._model._indices):
+            self.shot_activated.emit(int(self._model._indices[row]))
+
+    def highlight_shot(self, global_idx: int) -> None:
+        """Highlight and scroll to the row for global_idx, or clear if -1."""
+        if global_idx < 0 or len(self._model._indices) == 0:
+            self._table.clearSelection()
+            return
+        rows = np.where(self._model._indices == global_idx)[0]
+        if len(rows) == 0:
+            self._table.clearSelection()
+            return
+        row = int(rows[0])
+        self._table.selectRow(row)
+        self._table.scrollTo(self._model.index(row, 0))
 
     def _rows_to_text(self, rows: list[int]) -> str:
         """Convert table rows to tab-separated text with header."""
