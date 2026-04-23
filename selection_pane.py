@@ -8,7 +8,7 @@ in tab-separated format suitable for pasting into spreadsheets.
 from __future__ import annotations
 
 import numpy as np
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QAction
 from PyQt6.QtWidgets import (
     QApplication,
@@ -18,28 +18,11 @@ from PyQt6.QtWidgets import (
     QLabel,
     QPushButton,
     QAbstractItemView,
-    QApplication,
     QHeaderView,
     QTableView,
 )
 
 from pass_parser import PassData
-
-
-class _SortWorker(QObject):
-    """Sorts an index array on a background thread."""
-    finished = pyqtSignal(object)  # emits sorted np.ndarray (np.intp)
-
-    def __init__(self, indices) -> None:
-        super().__init__()
-        self._indices = indices
-
-    def run(self) -> None:
-        if isinstance(self._indices, np.ndarray):
-            result = np.sort(self._indices).astype(np.intp)
-        else:
-            result = np.array(sorted(self._indices), dtype=np.intp)
-        self.finished.emit(result)
 
 
 class _ShotTableModel(QAbstractTableModel):
@@ -197,9 +180,6 @@ class SelectionPane(QWidget):
         self.addAction(copy_act)
 
         self._data: PassData | None = None
-        self._sort_thread: QThread | None = None
-        self._sort_worker: _SortWorker | None = None
-        self._pending_count: int = 0
         self._current_indices: np.ndarray = np.empty(0, dtype=np.intp)
 
     def set_data(self, data: PassData) -> None:
@@ -211,45 +191,26 @@ class SelectionPane(QWidget):
         """Update per-file name/count info so Shot # and File columns are correct."""
         self._model.set_file_boundaries(names, counts)
 
-    def update_selection(self, indices: list[int]) -> None:
-        """Populate the table with the given shot indices (0-based), sorted by shot number."""
-        arr = np.asarray(indices, dtype=np.intp)
+    def update_selection(self, indices) -> None:
+        """Populate the table with the given shot indices (0-based).
+
+        All callers pass already-sorted indices (file-selected indices are sorted
+        aranges; box-selected indices come from np.nonzero which is always sorted).
+        """
+        arr = np.asarray(indices, dtype=np.intp)  # O(1) view when dtype already matches
+
+        # Skip re-render if selection hasn't changed
+        if arr is self._current_indices:
+            return
         total = len(arr)
+        if (total == len(self._current_indices)
+                and total < 500_000
+                and np.array_equal(arr, self._current_indices)):
+            return
 
-        # Cancel any in-flight sort first
-        if self._sort_worker is not None:
-            self._sort_worker.finished.disconnect(self._on_sort_ready)
-            self._sort_thread.quit()
-            self._sort_thread.wait()
-            self._sort_thread = None
-            self._sort_worker = None
-
-        # Dedup check: skip the O(N log N) sort on the main thread for large selections
-        if (total < 100_000
-                and total == len(self._current_indices)
-                and np.array_equal(np.sort(arr), self._current_indices)):
-            return  # identical selection — skip the clear/re-sort flash
-
-        self._pending_count = total
-        self._header_label.setText(f"Selection  ({total:,} shots)  —  loading…")
-        self._model.clear()
-        QApplication.processEvents()  # repaint before background thread result arrives
-        thread = QThread(self)
-        worker = _SortWorker(indices)
-        worker.moveToThread(thread)
-        thread.started.connect(worker.run)
-        worker.finished.connect(self._on_sort_ready)
-        worker.finished.connect(thread.quit)
-        thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._on_sort_thread_done)
-        self._sort_thread = thread
-        self._sort_worker = worker
-        thread.start()
-
-    def _on_sort_ready(self, sorted_indices: np.ndarray) -> None:
-        self._current_indices = sorted_indices   # sorted ascending — used for dedup check
-        self._model.set_sorted(self._data, sorted_indices)
-        self._header_label.setText(f"Selection  ({self._pending_count:,} shots)")
+        self._current_indices = arr
+        self._header_label.setText(f"Selection  ({total:,} shots)")
+        self._model.set_sorted(self._data, arr)
         QTimer.singleShot(0, self._emit_content_width)
 
     def _emit_content_width(self) -> None:
@@ -260,17 +221,9 @@ class SelectionPane(QWidget):
         w = col_w + scrollbar_w + margins.left() + margins.right() + 8
         self.content_ready.emit(w)
 
-    def _on_sort_thread_done(self) -> None:
-        self._sort_thread = None
-        self._sort_worker = None
-
     def shutdown(self) -> None:
-        """Stop any running background thread.  Call before the widget is destroyed."""
-        if self._sort_thread is not None:
-            self._sort_thread.quit()
-            self._sort_thread.wait()
-            self._sort_thread = None
-            self._sort_worker = None
+        """No-op — kept for API compatibility."""
+        pass
 
     # ── clipboard helpers ───────────────────────────────────────────
 
