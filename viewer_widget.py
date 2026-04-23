@@ -1611,6 +1611,9 @@ class ShotViewerWidget(QWidget):
             self._uploaded_sizes = dsizes
             self._upload_view(dpos, dsizes, dpp, stride)
             self._build_kdtree_async(dpos, idx)
+            # Refresh selection overlay to match new render density
+            if self._box_sel_markers.visible and len(self._box_selected_indices) and self._locked_indices is not None:
+                self._upload_box_sel_markers()
 
         # Always update status label
         rendered = len(getattr(self, '_uploaded_positions', []))
@@ -2373,40 +2376,47 @@ class ShotViewerWidget(QWidget):
         event.handled = True
 
     def _upload_box_sel_markers(self) -> None:
-        """Upload box-selection overlay markers, viewport-culled then strided."""
+        """Upload box-selection overlay markers."""
         idx_arr = self._box_selected_indices
         if len(idx_arr) == 0 or self._positions is None:
             return
 
-        print(f"[SEL] _upload_box_sel_markers: {len(idx_arr)} box_selected, locked={self._locked_indices is not None}")
-
-        # Always viewport-cull for locked selections (ignore the size threshold so that
-        # large files still get per-frame culled down to in-view shots before striding).
-        # For unlocked rubber-band selections only cull up to _BOX_SEL_VIEWPORT_CULL_MAX.
-        if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX or self._locked_indices is not None:
-            # Small selection: viewport-cull so we only upload on-screen markers
-            bounds = self._get_viewport_bounds()
-            if bounds is not None:
-                xmin, xmax, ymin, ymax = bounds
-                mx = (xmax - xmin) * 0.05
-                my = (ymax - ymin) * 0.05
-                sel_pos = self._positions[idx_arr]
-                vis = ((sel_pos[:, 0] >= xmin - mx) & (sel_pos[:, 0] <= xmax + mx) &
-                       (sel_pos[:, 1] >= ymin - my) & (sel_pos[:, 1] <= ymax + my))
-                idx_arr = idx_arr[vis]
-                print(f"[SEL]   after viewport cull ({xmin:.0f},{ymin:.0f})-({xmax:.0f},{ymax:.0f}): {len(idx_arr)} remain")
+        if self._locked_indices is not None:
+            # For locked (file-selected) indices: show only the currently-rendered
+            # shots that belong to the locked set so the overlay matches render density.
+            rendered = self._rendered_indices
+            if rendered is None or len(rendered) == 0:
+                return
+            lo, hi = int(idx_arr[0]), int(idx_arr[-1])
+            if len(idx_arr) == hi - lo + 1:
+                # Contiguous range (single-file): fast range check
+                mask = (rendered >= lo) & (rendered <= hi)
+            else:
+                # Multi-file union: set membership test
+                mask = np.isin(rendered, idx_arr, assume_unique=True)
+            idx_arr = rendered[mask]
             if len(idx_arr) == 0:
                 self._box_sel_markers.set_data(np.empty((0, 2)))
                 return
-
-        # Stride to cap GPU upload at ~500k markers
-        stride = max(1, len(idx_arr) // 500_000)
-        sub = idx_arr[::stride]
-
-        # Skip re-upload if the selection and stride haven't changed.
-        # For locked (file-selected) indices bypass the cache so viewport-culled
-        # markers refresh correctly as the camera moves.
-        if self._locked_indices is None:
+            # No stride — rendered_indices are already the right density
+            sub = idx_arr
+        else:
+            if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX:
+                # Small selection: viewport-cull so we only upload on-screen markers
+                bounds = self._get_viewport_bounds()
+                if bounds is not None:
+                    xmin, xmax, ymin, ymax = bounds
+                    mx = (xmax - xmin) * 0.05
+                    my = (ymax - ymin) * 0.05
+                    sel_pos = self._positions[idx_arr]
+                    vis = ((sel_pos[:, 0] >= xmin - mx) & (sel_pos[:, 0] <= xmax + mx) &
+                           (sel_pos[:, 1] >= ymin - my) & (sel_pos[:, 1] <= ymax + my))
+                    idx_arr = idx_arr[vis]
+                if len(idx_arr) == 0:
+                    self._box_sel_markers.set_data(np.empty((0, 2)))
+                    return
+            stride = max(1, len(idx_arr) // 500_000)
+            sub = idx_arr[::stride]
             cache_key = (id(self._box_selected_indices), stride)
             if cache_key == getattr(self, '_box_sel_cache_key', None):
                 return
@@ -2419,7 +2429,6 @@ class ShotViewerWidget(QWidget):
             face_color=_BOX_SELECTED_COLOR,
             edge_width=0,
         )
-        print(f"[SEL]   uploaded {len(sub)} markers (stride={stride})")
 
     def _apply_box_selection(self, indices: np.ndarray) -> None:
         """Highlight all box-selected shots and emit the signal."""

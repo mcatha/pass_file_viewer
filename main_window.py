@@ -1095,7 +1095,6 @@ class MainWindow(QMainWindow):
             return
         parts = [self._file_shot_indices(i) for i in sorted(self._file_selected)]
         indices = np.concatenate(parts).astype(np.intp)
-        print(f"[SEL] _apply_file_selection: files={sorted(self._file_selected)}, indices 0..{indices[-1]} ({len(indices)} total)")
         self._viewer.set_locked_indices(indices)
         self._viewer.select_shots(indices)
 
