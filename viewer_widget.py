@@ -1740,8 +1740,9 @@ class ShotViewerWidget(QWidget):
             self._uploaded_sizes = dsizes
             self._upload_view(dpos, dsizes, dpp, stride)
             self._build_kdtree_async(dpos, idx)
-            # Refresh selection overlay to match new render density
-            if self._box_sel_markers.visible and len(self._box_selected_indices) and self._locked_indices is not None:
+            # Refresh selection overlay to match new render density and alpha
+            if self._box_sel_markers.visible and len(self._box_selected_indices):
+                self._box_sel_cache_key = None  # force re-upload with updated alpha
                 self._upload_box_sel_markers()
 
         # Always update status label
