@@ -435,6 +435,9 @@ class _FiducialOverlay(QWidget):
         self.setStyleSheet("background: transparent;")
         # List of (screen_x, screen_y, label) to render this frame
         self.points: list[tuple[float, float, str]] = []
+        # Screen-space unit vectors along data X and Y axes (updated each camera change)
+        self.axis_x: tuple[float, float] = (1.0, 0.0)
+        self.axis_y: tuple[float, float] = (0.0, -1.0)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         if not self.points:
@@ -443,30 +446,43 @@ class _FiducialOverlay(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        r = 9.0    # circle radius (px)
-        arm = 20.0 # crosshair arm length from centre (px)
+        arm = 18.0  # crosshair arm length from gap to tip (px)
+        gap = 3.0   # gap between centre dot and arm start (px)
+        ax, ay = self.axis_x
+        bx, by = self.axis_y
+
+        shadow_pen = QPen(QColor(0, 0, 0, 200), 3.5)
+        shadow_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        fid_pen = QPen(_FIDUCIAL_DOT_COLOR, 1.5)
+        fid_pen.setCapStyle(Qt.PenCapStyle.FlatCap)
 
         for sx, sy, label in self.points:
-            pt = QPointF(sx, sy)
+            segs = [
+                (QPointF(sx + gap*ax, sy + gap*ay), QPointF(sx + arm*ax, sy + arm*ay)),
+                (QPointF(sx - gap*ax, sy - gap*ay), QPointF(sx - arm*ax, sy - arm*ay)),
+                (QPointF(sx + gap*bx, sy + gap*by), QPointF(sx + arm*bx, sy + arm*by)),
+                (QPointF(sx - gap*bx, sy - gap*by), QPointF(sx - arm*bx, sy - arm*by)),
+            ]
 
-            # Black shadow pass (drawn slightly thicker, same shapes)
-            shadow_pen = QPen(QColor(0, 0, 0, 200), 3.5)
+            # Shadow pass
             p.setPen(shadow_pen)
             p.setBrush(Qt.BrushStyle.NoBrush)
-            p.drawEllipse(pt, r, r)
-            p.drawLine(QPointF(sx - arm, sy), QPointF(sx + arm, sy))
-            p.drawLine(QPointF(sx, sy - arm), QPointF(sx, sy + arm))
+            for a, b in segs:
+                p.drawLine(a, b)
 
             # Coloured foreground pass
-            fid_pen = QPen(_FIDUCIAL_DOT_COLOR, 1.5)
             p.setPen(fid_pen)
-            p.drawEllipse(pt, r, r)
-            p.drawLine(QPointF(sx - arm, sy), QPointF(sx + arm, sy))
-            p.drawLine(QPointF(sx, sy - arm), QPointF(sx, sy + arm))
+            for a, b in segs:
+                p.drawLine(a, b)
+
+            # Centre dot
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(_FIDUCIAL_DOT_COLOR))
+            p.drawEllipse(QPointF(sx, sy), 2.0, 2.0)
 
             # Label: black outline + white fill
             lbl_path = QPainterPath()
-            lbl_path.addText(sx + r + 5, sy + 5, _FIDUCIAL_LABEL_FONT, label)
+            lbl_path.addText(sx + arm + 4, sy + 5, _FIDUCIAL_LABEL_FONT, label)
             p.setPen(QPen(QColor(0, 0, 0, 220), 3))
             p.setBrush(Qt.BrushStyle.NoBrush)
             p.drawPath(lbl_path)
@@ -1055,6 +1071,27 @@ class ShotViewerWidget(QWidget):
                      else _MB300_FIDUCIALS)
         cw = self._canvas.native.width()
         ch = self._canvas.native.height()
+
+        # Compute screen-space unit vectors for data X and Y axes (same technique
+        # as _reposition_axis_labels) so crosshair arms align with the coordinate axes.
+        try:
+            tr = self._canvas.scene.node_transform(self._visual_root)
+            step = max(float(self._camera.rect.width),
+                       float(self._camera.rect.height), 1.0) * 0.1
+            o0  = tr.imap([0.0,  0.0,  0, 1])
+            px0 = tr.imap([step, 0.0,  0, 1])
+            py0 = tr.imap([0.0,  step, 0, 1])
+            def _unit(ax, ay):
+                length = _math.hypot(ax, ay)
+                if length < 1e-12:
+                    return 1.0, 0.0
+                return ax / length, ay / length
+            axis_x = _unit(float(px0[0]) - float(o0[0]), float(px0[1]) - float(o0[1]))
+            axis_y = _unit(float(py0[0]) - float(o0[0]), float(py0[1]) - float(o0[1]))
+        except Exception:
+            axis_x = (1.0, 0.0)
+            axis_y = (0.0, -1.0)
+
         margin = 60
         points = []
         for name, x_nm, y_nm in fiducials:
@@ -1066,6 +1103,8 @@ class ShotViewerWidget(QWidget):
             sx, sy = float(sc[0]), float(sc[1])
             if -margin <= sx <= cw + margin and -margin <= sy <= ch + margin:
                 points.append((sx, sy, name))
+        self._fiducial_overlay.axis_x = axis_x
+        self._fiducial_overlay.axis_y = axis_y
         self._fiducial_overlay.points = points
         self._fiducial_overlay.resize(cw, ch)
         self._fiducial_overlay.update()
