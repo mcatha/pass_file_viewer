@@ -1108,6 +1108,10 @@ class MainWindow(QMainWindow):
     def _on_stripe_right_clicked(self, stripe_indices: list, global_pos: QPoint) -> None:
         """Show a context menu listing hovered pass files as checkable items."""
         menu = QMenu(self)
+        title = QAction("Select pass files:", self)
+        title.setEnabled(False)
+        menu.addAction(title)
+        menu.addSeparator()
         actions: list[tuple[int, QAction]] = []
         for idx in stripe_indices:
             if idx >= len(self._loaded_files):
