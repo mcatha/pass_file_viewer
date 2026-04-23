@@ -2182,6 +2182,20 @@ class ShotViewerWidget(QWidget):
         mx, my = self._pending_hover_px
         self._pending_hover_pos = None
 
+        # Shot-1 lens-flare proximity check — screen-space, takes priority
+        if (self._lines.visible and self._positions is not None
+                and len(self._file_break_offsets) > 0):
+            for offset in self._file_break_offsets:
+                sc = self._data_to_canvas(self._positions[offset])
+                if sc is not None:
+                    dx, dy = mx - sc[0], my - sc[1]
+                    if dx * dx + dy * dy <= 20 * 20:
+                        self._hover_tooltip.setText("Shot 1")
+                        self._hover_tooltip.adjustSize()
+                        self._hover_tooltip.move(int(mx) + 15, int(my) - 10)
+                        self._hover_tooltip.setVisible(True)
+                        return
+
         if self._kdtree is None or self._data is None:
             return
 
