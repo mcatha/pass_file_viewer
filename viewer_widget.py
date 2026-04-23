@@ -511,7 +511,8 @@ class ShotViewerWidget(QWidget):
         self._disc_box_sel_markers = visuals.Markers(parent=self._visual_root, antialias=2,
                                               scaling='scene', symbol='disc',
                                               method='instanced')
-        self._disc_box_sel_markers.set_gl_state('translucent', depth_test=False)
+        self._disc_box_sel_markers.set_gl_state(blend=True, depth_test=False,
+                                              blend_func=('src_alpha', 'one'))
         self._disc_box_sel_markers.set_data(
             np.zeros((1, 2), dtype=np.float32), size=0, edge_width=0
         )
@@ -521,7 +522,8 @@ class ShotViewerWidget(QWidget):
         self._gauss_box_sel_markers = GaussianMarkers(parent=self._visual_root, antialias=2,
                                               scaling='scene', symbol='disc',
                                               method='instanced')
-        self._gauss_box_sel_markers.set_gl_state('translucent', depth_test=False)
+        self._gauss_box_sel_markers.set_gl_state(blend=True, depth_test=False,
+                                              blend_func=('src_alpha', 'one'))
         self._gauss_box_sel_markers.set_data(
             np.zeros((1, 2), dtype=np.float32), size=0, edge_width=0
         )
@@ -1594,7 +1596,6 @@ class ShotViewerWidget(QWidget):
                 stride_scale_alpha = 1.0 + self._stride_inflate_amp * ls / (ls + 0.2)
                 alpha = max(self._alpha_far, alpha / (stride_scale_alpha ** self._alpha_comp_power))
             self._last_overlap_alpha = alpha
-            self._last_base_alpha = alpha
             face_color = np.array([*self._base_color[:3], alpha], dtype=np.float32)
             self._gauss_markers.set_data(
                 dpos, size=base_sizes,
@@ -1637,7 +1638,6 @@ class ShotViewerWidget(QWidget):
                 f = f_mid * (1.0 - t)
 
             self._last_overlap_alpha = ow * f
-            self._last_base_alpha = f
 
             base_fc = np.array([*self._base_color[:3], f], dtype=np.float32)
             self._disc_base_markers.set_data(
@@ -2553,6 +2553,8 @@ class ShotViewerWidget(QWidget):
         if len(idx_arr) == 0 or self._positions is None:
             return
 
+        dpp = self._get_data_per_px() or 1.0
+
         if self._locked_indices is not None:
             # For locked (file-selected) indices: show only the currently-rendered
             # shots that belong to the locked set so the overlay matches render density.
@@ -2589,18 +2591,14 @@ class ShotViewerWidget(QWidget):
                     return
             stride = max(1, len(idx_arr) // 500_000)
             sub = idx_arr[::stride]
-            dpp = self._get_data_per_px() or 1.0
             dpp_bucket = int(round(_math.log2(max(dpp, 1e-10)) * 4))
-            base_alpha = getattr(self, '_last_base_alpha', 1.0)
-            alpha_bucket = int(round(base_alpha * 20))
-            cache_key = (id(self._box_selected_indices), stride, dpp_bucket, alpha_bucket)
+            cache_key = (id(self._box_selected_indices), stride, dpp_bucket)
             if cache_key == getattr(self, '_box_sel_cache_key', None):
                 return
             self._box_sel_cache_key = cache_key
 
-        base_alpha = getattr(self, '_last_base_alpha', 1.0)
-        box_color = np.array([*_BOX_SELECTED_COLOR[:3], _BOX_SELECTED_COLOR[3] * base_alpha],
-                              dtype=np.float32)
+        tint_alpha = min(1.0, _BOX_SELECTED_COLOR[3] / max(dpp, 1.0))
+        box_color = np.array([*_BOX_SELECTED_COLOR[:3], tint_alpha], dtype=np.float32)
         box_sz = self._uniform_size if self._uniform_size is not None else self._sizes[sub]
         self._box_sel_markers.set_data(
             self._positions[sub],
