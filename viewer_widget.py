@@ -1017,7 +1017,9 @@ class ShotViewerWidget(QWidget):
         self._box_sel_worker = None
 
     def shutdown(self) -> None:
-        """Stop all background threads.  Call before the widget is destroyed."""
+        """Stop all background threads and timers.  Call before the widget is destroyed."""
+        self._shot_decim_timer.stop()
+        self._hover_timer.stop()
         for attr in ('_kdtree_thread', '_argsort_thread', '_box_sel_thread'):
             t = getattr(self, attr, None)
             if t is not None:
