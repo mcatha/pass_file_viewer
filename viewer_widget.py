@@ -2186,7 +2186,7 @@ class ShotViewerWidget(QWidget):
         pad = 10
 
         # Compute natural position for each label (preferred anchor: top-right of AABB)
-        entries: list[tuple[int, int, int, int]] = []  # (natural_y, x, w, h)  per label
+        entries: list[tuple[int, int, int, int]] = []  # (nat_y, x, w, h) per label
         labels: list[QLabel] = []
         for idx in self._pinned_stripes:
             _, label = self._pinned_stripes[idx]
@@ -2208,22 +2208,33 @@ class ShotViewerWidget(QWidget):
         order = sorted(range(len(entries)), key=lambda i: entries[i][0])
 
         placed: list[tuple[int, int, int, int]] = []  # (x, y, w, h) of placed labels
-        for i in order:
-            nat_y, x, w, h = entries[i]
+        placements: dict[int, tuple[int, int]] = {}   # orig_idx → (x, y)
+        for orig_idx in order:
+            nat_y, x, w, h = entries[orig_idx]
             y = nat_y
             # Push down past any label we'd overlap
             changed = True
             while changed:
                 changed = False
                 for px, py, pw, ph in placed:
-                    # Axis-aligned overlap check
                     if x < px + pw and x + w > px and y < py + ph and y + h > py:
                         y = py + ph + pad
                         changed = True
-            # Clamp to canvas bounds
-            y = max(0, min(y, ch - h))
-            labels[i].move(x, y)
             placed.append((x, y, w, h))
+            placements[orig_idx] = (x, y)
+
+        # If the stack overflows the bottom, shift the whole group upward
+        if placed:
+            _, last_y, _, last_h = placed[-1]
+            overflow = last_y + last_h - ch
+            if overflow > 0:
+                _, first_y, _, _ = placed[0]
+                shift = min(overflow, max(0, first_y))
+                placements = {k: (x, y - shift) for k, (x, y) in placements.items()}
+
+        for orig_idx, (x, y) in placements.items():
+            _, _, w, h = entries[orig_idx]
+            labels[orig_idx].move(x, max(0, min(y, ch - h)))
 
     def select_shots(self, indices: np.ndarray) -> None:
         """Public entry point to set the box selection to exactly these indices."""
