@@ -550,20 +550,20 @@ Unchecking a file removes its shots from the selection and unpins its boundary. 
 
 ### Column-position fiducial markers
 
-**View → Column Positions** (MB200 / MB300) overlays crosshair + circle markers at the nominal electron-column positions. Markers are implemented as vispy `Line` visuals parented to the scene's `_visual_root` node, so they live in world (data) space and scale naturally with pan/zoom.
+**View → Column Positions** (MB200 / MB300) overlays crosshair + circle markers at the nominal electron-column positions. Markers are painted by `_FiducialOverlay`, a transparent `QWidget` overlay that uses `QPainter` with antialiasing and `drawEllipse` for a perfect circle.
 
 | Property | Value |
 |----------|-------|
-| Colour | Light yellow `(1.0, 1.0, 0.55, 0.85)` |
-| Arm half-length | 10 mm (`_FIDUCIAL_ARM_NM = 10_000_000` nm) |
-| Circle radius | 3.5 mm (`_FIDUCIAL_CIRCLE_NM = 3_500_000` nm) — intersects the cross arms |
-| Stroke width | 0.4 mm (`_FIDUCIAL_LINE_WIDTH_NM = 400_000` nm), converted to screen pixels on each camera change |
-| Antialiasing | Off — avoids dark-edge GL artefacts at segment joints |
-| Draw order | `order = 10`, `depth_test = False` — renders in front of all other visuals |
+| Colour | Light yellow `QColor(255, 255, 140, 217)` |
+| Arm half-length | 10 mm (`_FIDUCIAL_ARM_NM`) — scales with zoom |
+| Circle radius | 3.5 mm (`_FIDUCIAL_CIRCLE_NM`) — intersects the cross arms; scales with zoom |
+| Stroke width | 2 px fixed screen space |
 
-The crosshair uses `connect='segments'` (two full lines through centre). The circle is a single `connect='strip'` polyline of 65 points with a boolean `connect` array that breaks between separate fiducials. Labels are `visuals.Text` positioned at the arm tip in world space (fixed screen-pixel font size regardless of zoom).
+Arm length and circle radius are computed each camera change as `nm / nm_per_px`, derived from `camera.rect.width / canvas_pixel_width`, so the geometry scales with zoom. A minimum of 5 px (arm) / 3 px (circle) prevents markers from collapsing to a point when fully zoomed out.
 
-`_reposition_fiducials()` rebuilds all geometry from scratch when the array type or data origin changes. `_update_fiducial_widths()` is called on every camera change and only updates the `width` parameter, converting `_FIDUCIAL_LINE_WIDTH_NM` to pixels via `camera.rect.width / canvas_pixel_width`.
+`_reposition_fiducials()` is called on every camera change and whenever `set_column_positions()` is called. It converts each fiducial's world position to screen coordinates via `_data_to_canvas`, clips to the viewport with a margin, and updates `_fiducial_overlay.markers`. Labels are painted directly by the overlay using `QPainterPath.addText`.
+
+**Note:** an earlier implementation used vispy `Line` visuals in world space, but vispy's `Line` does not support boolean break arrays for the `connect` parameter, causing the circle to render incorrectly. QPainter's `drawEllipse` is the correct tool here.
 
 ### Coordinate readout
 
