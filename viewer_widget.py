@@ -486,15 +486,13 @@ class ShotViewerWidget(QWidget):
         self._shot1_halo = visuals.Markers(parent=self._visual_root, antialias=4,
                                            scaling='fixed', symbol='disc',
                                            method='instanced')
-        self._shot1_halo.set_gl_state(blend=True, depth_test=False,
-                                      blend_func=('src_alpha', 'one'))
+        self._shot1_halo.set_gl_state('translucent', depth_test=False)
         self._shot1_halo.visible = False
 
         self._shot1_core = visuals.Markers(parent=self._visual_root, antialias=2,
                                            scaling='fixed', symbol='disc',
                                            method='instanced')
-        self._shot1_core.set_gl_state(blend=True, depth_test=False,
-                                      blend_func=('src_alpha', 'one'))
+        self._shot1_core.set_gl_state('translucent', depth_test=False)
         self._shot1_core.visible = False
 
         self._shot1_labels: list[QLabel] = []   # persistent "Shot 1" labels, one per file
@@ -1051,11 +1049,11 @@ class ShotViewerWidget(QWidget):
 
         shot1_pos = self._positions[np.array(self._file_break_offsets, dtype=np.intp)]
 
-        # Halo: large soft disc, warm-white glow (additive blend makes it bloom)
+        # Halo: large soft disc
         self._shot1_halo.set_data(
             shot1_pos,
             size=28,
-            face_color=(1.0, 1.0, 0.85, 0.20),
+            face_color=(1.0, 1.0, 0.85, 0.55),
             edge_width=0,
         )
         self._shot1_halo.visible = True
