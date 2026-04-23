@@ -925,15 +925,24 @@ class MainWindow(QMainWindow):
         self._next_load_incremental = False
         if _incremental:
             self._loaded_files.extend(results)
+            new_merged = PassData(
+                header=results[-1][0].header,
+                x=np.concatenate([d.x for d, _ in results]),
+                y=np.concatenate([d.y for d, _ in results]),
+                dwell=np.concatenate([d.dwell for d, _ in results]),
+                count=sum(d.count for d, _ in results),
+            )
+            self._status_label.setText(f"  Adding {new_merged.count:,} shots…")
+            QApplication.processEvents()
+            self._viewer.append_data(new_merged)
+            merged = self._viewer._data
         else:
             self._loaded_files = list(results)
             self._file_selected.clear()
-        merged = self._merge_loaded_files()
-
-        self._status_label.setText(f"  Rendering {merged.count:,} shots…")
-        QApplication.processEvents()
-
-        self._viewer.load_data(merged, keep_origin=_incremental)
+            merged = self._merge_loaded_files()
+            self._status_label.setText(f"  Rendering {merged.count:,} shots…")
+            QApplication.processEvents()
+            self._viewer.load_data(merged)
         self._selection_pane.set_data(merged)
         _counts = [d.count for d, _ in self._loaded_files]
         self._selection_pane.set_file_boundaries(
@@ -1029,16 +1038,17 @@ class MainWindow(QMainWindow):
         self._next_load_incremental = False
         if _incremental:
             self._loaded_files.append((data, path))
-            merged = self._merge_loaded_files()
+            self._status_label.setText(f"  Adding {data.count:,} shots…")
+            QApplication.processEvents()
+            self._viewer.append_data(data)
+            merged = self._viewer._data
         else:
             self._loaded_files = [(data, path)]
             self._file_selected.clear()
             merged = data
-
-        self._status_label.setText(f"  Rendering {merged.count:,} shots…")
-        QApplication.processEvents()
-
-        self._viewer.load_data(merged, keep_origin=_incremental)
+            self._status_label.setText(f"  Rendering {merged.count:,} shots…")
+            QApplication.processEvents()
+            self._viewer.load_data(merged)
         self._selection_pane.set_data(merged)
         _counts = [d.count for d, _ in self._loaded_files]
         self._selection_pane.set_file_boundaries(

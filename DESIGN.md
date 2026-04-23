@@ -460,7 +460,14 @@ After parsing, the stripe origin from the `.pass.meta` header (`stripeOriginX`, 
 
 **File → Incremental Open…** opens a separate file dialog whose selected files are appended to the current view instead of replacing it. Each file's shots are independently offset by their stripe origin, so shots from different stripes align in wafer coordinates. The status bar shows the number of loaded files, total shot count, and combined file size. Opening via the normal **File → Open…** always replaces all loaded data.
 
-When adding files incrementally, `load_data` is called with `keep_origin=True` so the existing centroid is preserved. Without this, each incremental load recomputes the centroid from all shots, shifting all GPU-side positions — the camera stays fixed in centroid-relative space, so the entire scene drifts and the newly added file's shots land off-screen.
+When adding files incrementally, `viewer.append_data(new_data)` is called instead of `load_data`. This skips all O(N_existing) CPU work:
+
+- Coordinates are centroid-shifted and cast to float32 **only for the new shots** (existing `_all_positions` is preserved)
+- Dwell sizes, raw dwells, and per-shot priorities are computed and appended for the new shots only
+- The data bounding box is extended (min/max with new shots) rather than recomputed from scratch
+- `self._data` is updated by concatenating only the new x/y/dwell arrays onto the existing ones
+
+The GPU re-upload (`set_data`) is still a full replace — vispy doesn't support appending to a vertex buffer and the decimated subset changes when N grows — but the argsort over all priorities is still O(N_total log N_total), so it's kicked off on a background thread as usual. The per-shot camera view is preserved (the origin doesn't change).
 
 ### FWHM slider
 

@@ -995,6 +995,124 @@ class ShotViewerWidget(QWidget):
         if self._wafer_diameter_nm is not None:
             self._reposition_wafer_outline()
 
+    def append_data(self, new_data: PassData) -> None:
+        """Append shots from new_data without re-processing the existing dataset.
+
+        Only the new shots are converted, sized, and assigned priorities.
+        The GPU re-upload is still a full re-upload (vispy set_data always
+        replaces), but all O(N_existing) CPU work is skipped.
+
+        Falls back to a full load if no data is currently loaded.
+        """
+        if self._all_positions is None or self._origin is None:
+            self.load_data(new_data, keep_origin=False)
+            return
+
+        import time as _time
+        _t0 = _time.perf_counter()
+
+        # ── Process only the new shots ──────────────────────────────────────
+        raw_new = np.column_stack((new_data.x, new_data.y))
+        new_pos = (raw_new - self._origin).astype(np.float32)
+
+        new_dwell_sizes = np.maximum(
+            new_data.dwell * _NM_PER_NS_DWELL * self._fwhm_scale, 1.0
+        ).astype(np.float32)
+
+        n_existing = len(self._all_positions)
+        n_new = len(new_pos)
+        new_dmax = float(new_dwell_sizes.max())
+        new_dmin = float(new_dwell_sizes.min())
+
+        # Positions
+        self._all_positions = np.concatenate([self._all_positions, new_pos])
+        self._positions = self._all_positions
+
+        # Sizes — if existing was uniform, check whether it still is
+        if self._uniform_size is not None:
+            if new_dmax == new_dmin and new_dmax == self._uniform_size:
+                pass  # still all identical — keep scalar
+            else:
+                old_sizes = np.full(n_existing, self._uniform_size, dtype=np.float32)
+                self._all_sizes = np.concatenate([old_sizes, new_dwell_sizes])
+                self._sizes = self._all_sizes
+                self._uniform_size = None
+        else:
+            self._all_sizes = np.concatenate([self._all_sizes, new_dwell_sizes])
+            self._sizes = self._all_sizes
+
+        self._max_shot_size = max(self._max_shot_size, new_dmax)
+
+        # Raw dwells (needed when fwhm_scale changes)
+        self._raw_dwells = np.concatenate([self._raw_dwells, new_data.dwell])
+
+        # Priorities for new shots — fresh random (no fixed seed needed)
+        rng = np.random.default_rng()
+        new_priorities = rng.random(n_new).astype(np.float32)
+        self._shot_priority = np.concatenate([self._shot_priority, new_priorities])
+
+        # Bounding box — extend, don't recompute
+        new_min = new_pos.min(axis=0)
+        new_max = new_pos.max(axis=0)
+        self._data_xmin = min(self._data_xmin, float(new_min[0]))
+        self._data_xmax = max(self._data_xmax, float(new_max[0]))
+        self._data_ymin = min(self._data_ymin, float(new_min[1]))
+        self._data_ymax = max(self._data_ymax, float(new_max[1]))
+        self._data_width  = self._data_xmax - self._data_xmin
+        self._data_height = self._data_ymax - self._data_ymin
+
+        # Merged PassData — needed for tooltip index lookups
+        old = self._data
+        self._data = PassData(
+            header=new_data.header,
+            x=np.concatenate([old.x, new_data.x]),
+            y=np.concatenate([old.y, new_data.y]),
+            dwell=np.concatenate([old.dwell, new_data.dwell]),
+            count=old.count + n_new,
+        )
+
+        _t1 = _time.perf_counter()
+
+        # ── Reset selection state ────────────────────────────────────────────
+        self._kdtree = None
+        self._selected_idx = None
+        self._box_selected_indices = np.empty(0, dtype=np.intp)
+        self._locked_indices = None
+        self._sel_marker.visible = False
+        self._sel_lines.visible = False
+        self._box_sel_markers.visible = False
+
+        # ── Re-sort priorities on background thread ──────────────────────────
+        self._priority_sorted = None
+        if self._argsort_worker is not None:
+            self._argsort_worker.finished.disconnect(self._on_argsort_ready)
+            self._argsort_thread.quit()
+            self._argsort_thread.wait()
+        argsort_thread = QThread(self)
+        argsort_worker = _ArgsortWorker(self._shot_priority)
+        argsort_worker.moveToThread(argsort_thread)
+        argsort_thread.started.connect(argsort_worker.run)
+        argsort_worker.finished.connect(self._on_argsort_ready)
+        argsort_worker.finished.connect(argsort_thread.quit)
+        argsort_thread.finished.connect(argsort_worker.deleteLater)
+        argsort_thread.finished.connect(self._on_argsort_thread_done)
+        self._argsort_thread = argsort_thread
+        self._argsort_worker = argsort_worker
+        argsort_thread.start()
+
+        # ── GPU upload ───────────────────────────────────────────────────────
+        self._recompute_base_color()
+        self._upload_all_shots()
+
+        if self._lines.visible:
+            self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
+            self._lines_data_set = True
+
+        _t2 = _time.perf_counter()
+        n_total = len(self._all_positions)
+        print(f"[append] prep: {(_t1-_t0)*1000:.0f}ms  upload: {(_t2-_t1)*1000:.0f}ms  "
+              f"total: {(_t2-_t0)*1000:.0f}ms  ({n_new:,} new, {n_total:,} total)")
+
     def set_stripe_regions(self, regions: list[dict]) -> None:
         """Set stripe region metadata for hover-activated rectangle display."""
         self._clear_pinned_stripes()
