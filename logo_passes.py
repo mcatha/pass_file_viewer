@@ -28,6 +28,7 @@ Stage motion
 """
 
 import struct
+import math as _math
 import numpy as np
 from PIL import Image
 from pathlib import Path
@@ -38,8 +39,12 @@ _LOGO   = _HERE.parent / "mb-logo-w-tag.png"
 OUT_DIR = _HERE.parent / "logo_passes"
 
 # ── Physical parameters (nm) ──────────────────────────────────────────────────
-LOGO_WIDTH_NM  = 250_000_000
-LOGO_HEIGHT_NM = round(LOGO_WIDTH_NM * 145 / 600)   # ≈ 60_416_667
+# Scale logo so its corners fall exactly 1 mm inside the 300 mm wafer edge.
+# Logo pixel aspect: 600 × 145.  Corner radius = sqrt((W/2)² + (H/2)²) = 149 mm.
+_CORNER_R_NM   = 149_000_000   # 150 mm wafer radius − 1 mm margin
+_LOGO_DIAG_PX  = _math.sqrt(600**2 + 145**2)
+LOGO_WIDTH_NM  = round(2 * _CORNER_R_NM * 600 / _LOGO_DIAG_PX)
+LOGO_HEIGHT_NM = round(LOGO_WIDTH_NM * 145 / 600)
 
 LOGO_X_MIN = -(LOGO_WIDTH_NM  // 2)   # −125_000_000
 LOGO_X_MAX =   LOGO_WIDTH_NM  // 2    # +125_000_000
