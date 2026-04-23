@@ -70,11 +70,10 @@ _ARROW_COLOR = QColor(200, 200, 200, 220)
 _LABEL_COLOR = QColor(255, 255, 255, 255)    # pure white
 _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
 _AXIS_LABEL_FONT = QFont("Consolas", 17, QFont.Weight.Bold)
-_FIDUCIAL_COLOR      = (1.0, 1.0, 0.55, 0.85)   # light yellow
+_FIDUCIAL_PEN_COLOR  = QColor(255, 255, 140, 217)   # light yellow
+_FIDUCIAL_LABEL_FONT = QFont("Consolas", 11, QFont.Weight.Bold)
 _FIDUCIAL_ARM_NM     = 10_000_000  # 10 mm half-length of each arm
 _FIDUCIAL_CIRCLE_NM  = 3_500_000   # 3.5 mm circle radius (intersects arms)
-_FIDUCIAL_LINE_WIDTH_NM = 400_000  # 0.4 mm stroke width (scales with zoom)
-_FIDUCIAL_CIRCLE_PTS = 64         # polygon approximation of each circle
 
 # Column-position fiducials — (label, x_nm, y_nm) in machine coordinates
 _MM = 1_000_000   # mm → nm
@@ -428,6 +427,41 @@ class _AxisArrowOverlay(QWidget):
         p.end()
 
 
+class _FiducialOverlay(QWidget):
+    """Transparent overlay that paints column-position fiducials."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
+        # List of (cx, cy, arm_px, circle_r_px, label)
+        self.markers: list[tuple[float, float, float, float, str]] = []
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        if not self.markers:
+            return
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(_FIDUCIAL_PEN_COLOR, 2.0)
+        pen.setCapStyle(Qt.PenCapStyle.FlatCap)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for cx, cy, arm_px, circle_r_px, label in self.markers:
+            p.drawLine(QPointF(cx - arm_px, cy), QPointF(cx + arm_px, cy))
+            p.drawLine(QPointF(cx, cy - arm_px), QPointF(cx, cy + arm_px))
+            p.drawEllipse(QPointF(cx, cy), circle_r_px, circle_r_px)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(_FIDUCIAL_PEN_COLOR))
+            from PyQt6.QtGui import QPainterPath
+            lbl = QPainterPath()
+            lbl.addText(cx + arm_px + 4, cy + 5, _FIDUCIAL_LABEL_FONT, label)
+            p.drawPath(lbl)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            p.setPen(pen)
+        p.end()
+
+
 class ShotViewerWidget(QWidget):
     """QWidget wrapper around a vispy SceneCanvas for shot visualisation."""
 
@@ -613,38 +647,10 @@ class ShotViewerWidget(QWidget):
         self._arrow_overlay = _AxisArrowOverlay(self._canvas.native)
         self._arrow_overlay.show()
 
-        # Fiducial / column-position markers (world space — scale with pan/zoom)
-        _fid_c = _FIDUCIAL_COLOR
-        self._fid_lines = visuals.Line(
-            np.zeros((2, 2), dtype=np.float64),
-            color=_fid_c, width=3.5, connect='segments',
-            antialias=False, parent=self._visual_root,
-        )
-        self._fid_lines.order = 10
-        self._fid_lines.set_gl_state(depth_test=False, blend=True)
-        self._fid_lines.visible = False
-        self._fid_circles = visuals.Line(
-            np.zeros((2, 2), dtype=np.float64),
-            color=_fid_c, width=3.5, connect='strip',
-            antialias=False, parent=self._visual_root,
-        )
-        self._fid_circles.order = 10
-        self._fid_circles.set_gl_state(depth_test=False, blend=True)
-        self._fid_circles.visible = False
-        self._fid_labels = visuals.Text(
-            text='', color=(1.0, 1.0, 1.0, 0.9),
-            font_size=12, bold=True,
-            anchor_x='left', anchor_y='center',
-            parent=self._visual_root,
-        )
-        self._fid_labels.order = 10
-        self._fid_labels.set_gl_state(depth_test=False, blend=True)
-        self._fid_labels.visible = False
+        # Fiducial / column-position markers
+        self._fiducial_overlay = _FiducialOverlay(self._canvas.native)
+        self._fiducial_overlay.show()
         self._fiducial_array: str | None = None
-        # Cached geometry for width-on-zoom updates
-        self._fid_seg_pts:  np.ndarray | None = None
-        self._fid_circ_pts: np.ndarray | None = None
-        self._fid_circ_conn: np.ndarray | None = None
 
         # Coordinate readout label at bottom of canvas
         self._coord_label = QLabel(self._canvas.native)
@@ -1032,71 +1038,40 @@ class ShotViewerWidget(QWidget):
         self._reposition_fiducials()
 
     def _reposition_fiducials(self) -> None:
-        """Build fiducial geometry in world (data) space."""
+        """Recompute fiducial screen positions and repaint the overlay."""
         if self._fiducial_array is None or self._origin is None:
-            self._fid_seg_pts = None
-            self._fid_lines.visible = False
-            self._fid_circles.visible = False
-            self._fid_labels.visible = False
+            self._fiducial_overlay.markers = []
+            self._fiducial_overlay.update()
             return
 
         fiducials = (_MB200_FIDUCIALS if self._fiducial_array == 'MB200'
                      else _MB300_FIDUCIALS)
-        arm = _FIDUCIAL_ARM_NM
-        r   = _FIDUCIAL_CIRCLE_NM
-        n   = len(fiducials)
 
-        # Crosshair: 2 segments (vertical + horizontal) per fiducial → 4 pts each
-        seg_pts = np.empty((n * 4, 2), dtype=np.float64)
-
-        # Circles: (FIDUCIAL_CIRCLE_PTS+1) pts each, broken between fiducials
-        nc = _FIDUCIAL_CIRCLE_PTS + 1
-        theta = np.linspace(0.0, 2.0 * np.pi, nc)
-        unit_circ = np.column_stack([np.cos(theta), np.sin(theta)])
-        all_circ  = np.empty((n * nc, 2), dtype=np.float64)
-        circ_conn = np.ones(n * nc - 1, dtype=bool)
-        for i in range(1, n):
-            circ_conn[i * nc - 1] = False  # break between circles
-
-        label_pos   = np.zeros((n, 3), dtype=np.float32)
-        label_texts = []
-
-        for i, (name, x_nm, y_nm) in enumerate(fiducials):
-            wx = x_nm - self._origin[0]
-            wy = y_nm - self._origin[1]
-            seg_pts[i*4:i*4+4] = [
-                [wx,       wy + arm], [wx,       wy - arm],  # vertical
-                [wx + arm, wy      ], [wx - arm, wy      ],  # horizontal
-            ]
-            all_circ[i*nc:(i+1)*nc] = unit_circ * r + np.array([wx, wy])
-            label_pos[i]   = [wx + arm * 1.08, wy, 0.0]
-            label_texts.append(name)
-
-        self._fid_seg_pts   = seg_pts
-        self._fid_circ_pts  = all_circ
-        self._fid_circ_conn = circ_conn
-
-        self._update_fiducial_widths()
-        self._fid_lines.visible   = True
-        self._fid_circles.visible = True
-
-        self._fid_labels.text = label_texts
-        self._fid_labels.pos  = label_pos
-        self._fid_labels.visible = True
-
-    def _update_fiducial_widths(self) -> None:
-        """Recompute line pixel width from current zoom and re-upload to GPU."""
-        if self._fid_seg_pts is None:
-            return
         try:
             nm_per_px = self._camera.rect.width / max(self._canvas.native.width(), 1)
         except Exception:
-            return
-        px_w = max(1.0, _FIDUCIAL_LINE_WIDTH_NM / nm_per_px)
-        self._fid_lines.set_data(self._fid_seg_pts, color=_FIDUCIAL_COLOR,
-                                 width=px_w, connect='segments')
-        self._fid_circles.set_data(self._fid_circ_pts, connect=self._fid_circ_conn,
-                                   color=_FIDUCIAL_COLOR, width=px_w)
+            nm_per_px = 1e6
+        arm_px    = max(5.0, _FIDUCIAL_ARM_NM / nm_per_px)
+        circle_px = max(3.0, _FIDUCIAL_CIRCLE_NM / nm_per_px)
+
+        cw = self._canvas.native.width()
+        ch = self._canvas.native.height()
+        margin = arm_px + circle_px + 20
+
+        markers = []
+        for name, x_nm, y_nm in fiducials:
+            sc = self._data_to_canvas(
+                np.array([x_nm - self._origin[0], y_nm - self._origin[1]])
+            )
+            if sc is None:
+                continue
+            cx, cy = float(sc[0]), float(sc[1])
+            if -margin <= cx <= cw + margin and -margin <= cy <= ch + margin:
+                markers.append((cx, cy, arm_px, circle_px, name))
+
+        self._fiducial_overlay.markers = markers
+        self._fiducial_overlay.resize(cw, ch)
+        self._fiducial_overlay.update()
 
     def _build_kdtree_async(self, positions: np.ndarray, rendered_indices: np.ndarray | None) -> None:
         """Build the KD-tree on a worker thread."""
@@ -2003,7 +1978,7 @@ class ShotViewerWidget(QWidget):
             self._position_stripe_tooltip()
         self._position_pinned_labels()
         self._reposition_shot1_labels()
-        self._update_fiducial_widths()
+        self._reposition_fiducials()
 
         # Throttled shot stride update on zoom
         if self._all_positions is not None:
