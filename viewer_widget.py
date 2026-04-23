@@ -1032,16 +1032,23 @@ class ShotViewerWidget(QWidget):
         # ── Process only the new shots ──────────────────────────────────────
         n_new = len(new_data.x)
         new_pos = np.empty((n_new, 2), dtype=np.float32)
+        _t0a = _time.perf_counter()
         np.subtract(new_data.x, self._origin[0], out=new_pos[:, 0])
+        _t0b = _time.perf_counter()
         np.subtract(new_data.y, self._origin[1], out=new_pos[:, 1])
-
+        _t0c = _time.perf_counter()
         new_dwell_sizes = np.maximum(
             new_data.dwell * _NM_PER_NS_DWELL * self._fwhm_scale, 1.0
         ).astype(np.float32)
+        _t0d = _time.perf_counter()
 
         n_existing = len(self._all_positions)
         new_dmax = float(new_dwell_sizes.max())
         new_dmin = float(new_dwell_sizes.min())
+        _t0e = _time.perf_counter()
+        print(f"[append-pre] alloc:{(_t0a-_t0)*1000:.0f}ms  subX:{(_t0b-_t0a)*1000:.0f}ms  "
+              f"subY:{(_t0c-_t0b)*1000:.0f}ms  dwell:{(_t0d-_t0c)*1000:.0f}ms  "
+              f"maxmin:{(_t0e-_t0d)*1000:.0f}ms  total:{(_t0e-_t0)*1000:.0f}ms")
 
         _ta = _time.perf_counter()
 
