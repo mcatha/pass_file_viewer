@@ -57,7 +57,13 @@ class _ShotTableModel(QAbstractTableModel):
         self.endResetModel()
 
     def sort(self, column: int, order=Qt.SortOrder.AscendingOrder) -> None:
+        # Skip sort for very large datasets — np.argsort on millions of rows
+        # blocks the main thread.  Qt calls this automatically via updateGeometries()
+        # when setSortingEnabled is True, so we must guard here rather than at the call site.
+        _SORT_MAX = 500_000
         if self._data is None or len(self._indices) == 0 or column < 0:
+            return
+        if len(self._indices) > _SORT_MAX:
             return
         idx = self._indices
         if column == 0:   # per-file shot number
@@ -80,10 +86,15 @@ class _ShotTableModel(QAbstractTableModel):
         self._indices = idx[order_arr]
         self.endResetModel()
 
+    # Qt QScrollBar uses a 32-bit int for its range.  At ~30 px/row the
+    # table content height overflows INT_MAX around 70 M rows, causing the
+    # view to go blank.  Cap the visible row count well below that limit.
+    _ROW_CAP = 2_000_000
+
     # ── QAbstractTableModel interface ──
 
     def rowCount(self, parent=QModelIndex()):
-        return len(self._indices)
+        return min(len(self._indices), self._ROW_CAP)
 
     def columnCount(self, parent=QModelIndex()):
         return len(self._COLUMNS)
@@ -215,7 +226,13 @@ class SelectionPane(QWidget):
             return
 
         self._current_indices = arr
-        self._header_label.setText(f"Selection  ({total:,} shots)")
+        cap = _ShotTableModel._ROW_CAP
+        if total > cap:
+            self._header_label.setText(
+                f"Selection  ({total:,} shots, showing first {cap:,})"
+            )
+        else:
+            self._header_label.setText(f"Selection  ({total:,} shots)")
         self._model.set_sorted(self._data, arr)
         QTimer.singleShot(0, self._emit_content_width)
 
