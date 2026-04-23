@@ -883,13 +883,14 @@ class ShotViewerWidget(QWidget):
             return
 
         # Build Nx2 position array — centroid-shifted for GPU float32 precision.
-        # Input may be float64 (after origin offset) or float32 (raw bitfields).
-        # Subtract in float64 to preserve precision, then cast to float32.
-        raw_pos = np.column_stack((data.x, data.y))
+        # Write directly into a float32 output via np.subtract to avoid allocating
+        # an intermediate (N,2) float64 array (would be ~23 GiB at 1.5B shots).
+        n = len(data.x)
         if not keep_origin:
-            self._origin = raw_pos.mean(axis=0).astype(np.float64)
-        self._positions = (raw_pos - self._origin).astype(np.float32)
-        del raw_pos
+            self._origin = np.array([data.x.mean(), data.y.mean()], dtype=np.float64)
+        self._positions = np.empty((n, 2), dtype=np.float32)
+        np.subtract(data.x, self._origin[0], out=self._positions[:, 0])
+        np.subtract(data.y, self._origin[1], out=self._positions[:, 1])
         _t1 = _time.perf_counter()
 
         # Diameter in data units (nm): FWHM = dwell_ns * _NM_PER_NS_DWELL * _fwhm_scale
@@ -1012,15 +1013,16 @@ class ShotViewerWidget(QWidget):
         _t0 = _time.perf_counter()
 
         # ── Process only the new shots ──────────────────────────────────────
-        raw_new = np.column_stack((new_data.x, new_data.y))
-        new_pos = (raw_new - self._origin).astype(np.float32)
+        n_new = len(new_data.x)
+        new_pos = np.empty((n_new, 2), dtype=np.float32)
+        np.subtract(new_data.x, self._origin[0], out=new_pos[:, 0])
+        np.subtract(new_data.y, self._origin[1], out=new_pos[:, 1])
 
         new_dwell_sizes = np.maximum(
             new_data.dwell * _NM_PER_NS_DWELL * self._fwhm_scale, 1.0
         ).astype(np.float32)
 
         n_existing = len(self._all_positions)
-        n_new = len(new_pos)
         new_dmax = float(new_dwell_sizes.max())
         new_dmin = float(new_dwell_sizes.min())
 
