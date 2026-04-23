@@ -1052,6 +1052,11 @@ class ShotViewerWidget(QWidget):
         n_existing = len(self._all_positions)
         new_dmax = float(new_dwell_sizes.max())
         new_dmin = float(new_dwell_sizes.min())
+
+        # Bounding box scalars — compute while new_pos is still hot in cache,
+        # before the concatenations evict it under memory pressure.
+        new_pos_min = new_pos.min(axis=0)
+        new_pos_max = new_pos.max(axis=0)
         _t0e = _time.perf_counter()
         print(f"[append-pre] alloc:{(_t0a-_t0)*1000:.0f}ms  subX:{(_t0b-_t0a)*1000:.0f}ms  "
               f"subY:{(_t0c-_t0b)*1000:.0f}ms  dwell:{(_t0d-_t0c)*1000:.0f}ms  "
@@ -1096,13 +1101,11 @@ class ShotViewerWidget(QWidget):
         print(f"[append-prep] pos:{(_tb-_ta)*1000:.0f}ms  sizes:{(_tc-_tb)*1000:.0f}ms  "
               f"dwells:{(_td-_tc)*1000:.0f}ms  priority:{(_te-_td)*1000:.0f}ms")
 
-        # Bounding box — extend, don't recompute
-        new_min = new_pos.min(axis=0)
-        new_max = new_pos.max(axis=0)
-        self._data_xmin = min(self._data_xmin, float(new_min[0]))
-        self._data_xmax = max(self._data_xmax, float(new_max[0]))
-        self._data_ymin = min(self._data_ymin, float(new_min[1]))
-        self._data_ymax = max(self._data_ymax, float(new_max[1]))
+        # Bounding box — extend using values computed before concatenations
+        self._data_xmin = min(self._data_xmin, float(new_pos_min[0]))
+        self._data_xmax = max(self._data_xmax, float(new_pos_max[0]))
+        self._data_ymin = min(self._data_ymin, float(new_pos_min[1]))
+        self._data_ymax = max(self._data_ymax, float(new_pos_max[1]))
         self._data_width  = self._data_xmax - self._data_xmin
         self._data_height = self._data_ymax - self._data_ymin
 
