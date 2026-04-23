@@ -501,7 +501,11 @@ Each control is a horizontal slider with label and numeric value display, expose
 
 ### Selection Pane
 
-Dockable side panel with a virtual `QTableView` (virtual rows — scales to any selection size). Columns: Shot #, X (nm), Y (nm), Dwell (ns). Supports Ctrl+A/Ctrl+C for clipboard copy in tab-separated format.
+Dockable side panel with a virtual `QTableView`. Columns: Shot #, File, X (nm), Y (nm), Dwell (ns). Supports Ctrl+A/Ctrl+C for clipboard copy in tab-separated format.
+
+**Qt 32-bit overflow constraint**: `QHeaderView::length()` = `rowCount × defaultSectionSize` uses 32-bit integer arithmetic. At the default section height (~30 px) this overflows `INT_MAX` at ~71 M rows, causing Qt to render a blank viewport. The model therefore reports `rowCount = min(total, _MAX_VIRTUAL_ROWS)` where `_MAX_VIRTUAL_ROWS = 10 000 000` (10 M rows × 30 px = 300 M, well below `INT_MAX`).
+
+When the full selection exceeds `_MAX_VIRTUAL_ROWS`, a horizontal offset scrollbar appears below the table labelled "Rows 1 – 10,000,000 of N". Dragging it shifts the model's `_offset` pointer so the visible window slides through the full `_indices` array. All shots remain accessible; none are dropped. `highlight_shot()` auto-navigates the window when the target row falls outside the current view.
 
 ### Status bar
 
@@ -519,7 +523,14 @@ Fields: total shots in file, visible (viewport-culled), active stride, rendered 
 
 ### Wafer outline
 
-**View → Wafer Outline** provides a submenu of standard wafer diameters: None, 2" (51 mm), 4" (100 mm), 5" (125 mm), 6" (150 mm), 8" (200 mm), 12" (300 mm), 18" (450 mm). Selecting a size draws a circle of that diameter centered on the wafer origin (0, 0 in absolute coordinates). The circle uses a 256-segment `visuals.Line` with colour `(1.0, 0.2, 0.2, 0.9)` (red). The outline repositions automatically when new data is loaded (since the centroid shift changes). Selecting "None" hides the circle.
+**View → Wafer Outline** provides a submenu of standard wafer diameters. The circle is drawn as two layered `visuals.Line` passes to produce a soft alpha falloff across the stroke:
+
+| Layer | Width | Colour (RGBA) | Purpose |
+|-------|-------|---------------|---------|
+| Outer glow | 5 px | `(1.0, 0.25, 0.25, 0.20)` | Soft halo |
+| Core | 1.5 px | `(1.0, 0.18, 0.18, 0.85)` | Bright centre line |
+
+Both layers share 257 vertices (256 closed segments). The outline repositions automatically when new data is loaded. Selecting "None" hides both layers.
 
 ### Stripe region hover and file selection
 
@@ -536,6 +547,23 @@ The tooltip anchors to the rectangle's top-right corner. If the user zooms in so
 2. Pins the file's boundary rectangle and metadata label permanently in the scene (cyan border), so they remain visible even when the cursor moves away.
 
 Unchecking a file removes its shots from the selection and unpins its boundary. Multiple files can be selected simultaneously; their shot index ranges are concatenated. `MainWindow` tracks the set of file-selected file indices in `_file_selected`. Pinned visuals use separate `visuals.Rectangle` instances (one per pinned file) stored in `_pinned_stripes`. Pinned metadata labels are repositioned on every camera change.
+
+### Column-position fiducial markers
+
+**View → Column Positions** (MB200 / MB300) overlays crosshair + circle markers at the nominal electron-column positions. Markers are implemented as vispy `Line` visuals parented to the scene's `_visual_root` node, so they live in world (data) space and scale naturally with pan/zoom.
+
+| Property | Value |
+|----------|-------|
+| Colour | Light yellow `(1.0, 1.0, 0.55, 0.85)` |
+| Arm half-length | 10 mm (`_FIDUCIAL_ARM_NM = 10_000_000` nm) |
+| Circle radius | 3.5 mm (`_FIDUCIAL_CIRCLE_NM = 3_500_000` nm) — intersects the cross arms |
+| Stroke width | 0.4 mm (`_FIDUCIAL_LINE_WIDTH_NM = 400_000` nm), converted to screen pixels on each camera change |
+| Antialiasing | Off — avoids dark-edge GL artefacts at segment joints |
+| Draw order | `order = 10`, `depth_test = False` — renders in front of all other visuals |
+
+The crosshair uses `connect='segments'` (two full lines through centre). The circle is a single `connect='strip'` polyline of 65 points with a boolean `connect` array that breaks between separate fiducials. Labels are `visuals.Text` positioned at the arm tip in world space (fixed screen-pixel font size regardless of zoom).
+
+`_reposition_fiducials()` rebuilds all geometry from scratch when the array type or data origin changes. `_update_fiducial_widths()` is called on every camera change and only updates the `width` parameter, converting `_FIDUCIAL_LINE_WIDTH_NM` to pixels via `camera.rect.width / canvas_pixel_width`.
 
 ### Coordinate readout
 
