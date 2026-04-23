@@ -870,9 +870,6 @@ class ShotViewerWidget(QWidget):
             being recomputed from the new data.  Use this for incremental
             loads so the camera position stays stable as new files are added.
         """
-        import time as _time
-        _t0 = _time.perf_counter()
-
         self._data = data
         self._lines_data_set = False
         self._kdtree = None
@@ -907,7 +904,6 @@ class ShotViewerWidget(QWidget):
         self._positions = np.empty((n, 2), dtype=np.float32)
         np.subtract(data.x, self._origin[0], out=self._positions[:, 0])
         np.subtract(data.y, self._origin[1], out=self._positions[:, 1])
-        _t1 = _time.perf_counter()
 
         # Diameter in data units (nm): FWHM = dwell_ns * _NM_PER_NS_DWELL * _fwhm_scale
         self._raw_dwells = data.dwell
@@ -923,7 +919,6 @@ class ShotViewerWidget(QWidget):
             # All dwells identical → single scalar saves N*4 bytes
             self._uniform_size = float(dmin_sz)
             self._sizes = self._uniform_size
-        _t2 = _time.perf_counter()
 
         # Store full-resolution data; visuals always get decimated subset
         self._all_positions = self._positions
@@ -977,9 +972,7 @@ class ShotViewerWidget(QWidget):
 
         # Upload all points to GPU once — pan/zoom is a pure GPU matrix
         # transform with zero CPU cost per frame.
-        n_pts = len(self._positions)
         self._upload_all_shots()
-        _t3 = _time.perf_counter()
 
         # Lines data is DEFERRED until the user toggles them on (saves GPU upload)
         if self._lines.visible:
@@ -1004,18 +997,12 @@ class ShotViewerWidget(QWidget):
             orig_c.reshape(1, 2),
             size=8, face_color=(1, 1, 1, 0.9), edge_width=0,
         )
-        _t4 = _time.perf_counter()
 
         # Reset rotation
         self._rotation_deg = 0.0
         self._visual_root.transform = scene.transforms.MatrixTransform()
         self._last_cam_sig = None  # force arrow/axis reposition after origin change
         self._fit_view()
-        _t5 = _time.perf_counter()
-        print(f"[load] positions: {(_t1-_t0)*1000:.0f}ms  sizes: {(_t2-_t1)*1000:.0f}ms  "
-              f"upload: {(_t3-_t2)*1000:.0f}ms  axes: {(_t4-_t3)*1000:.0f}ms  "
-              f"fit: {(_t5-_t4)*1000:.0f}ms  total: {(_t5-_t0)*1000:.0f}ms  "
-              f"({n_pts:,} pts)")
 
         # Reposition wafer outline if active (centroid changed)
         if self._wafer_diameter_nm is not None:
@@ -1034,9 +1021,6 @@ class ShotViewerWidget(QWidget):
             self.load_data(new_data, keep_origin=False)
             return
 
-        import time as _time
-        _t0 = _time.perf_counter()
-
         # ── Process only the new shots ──────────────────────────────────────
         n_new = len(new_data.x)
         n_existing = len(self._all_positions)
@@ -1044,17 +1028,14 @@ class ShotViewerWidget(QWidget):
         # Bounding box from raw int32 arrays — contiguous, hot in RAM, no large
         # temp allocation.  new_pos (3 GB) would be evicted from RAM before
         # min/max could read it, making that operation page from swap (~15 s).
-        _t0a = _time.perf_counter()
         new_pos_min = np.array([float(new_data.x.min()) - self._origin[0],
                                 float(new_data.y.min()) - self._origin[1]], dtype=np.float32)
         new_pos_max = np.array([float(new_data.x.max()) - self._origin[0],
                                 float(new_data.y.max()) - self._origin[1]], dtype=np.float32)
-        _t0ab = _time.perf_counter()
 
         new_pos = np.empty((n_new, 2), dtype=np.float32)
         np.subtract(new_data.x, self._origin[0], out=new_pos[:, 0])
         np.subtract(new_data.y, self._origin[1], out=new_pos[:, 1])
-        _t0b = _time.perf_counter()
 
         # Fill dwell sizes, then immediately compute size bounds.
         _coef = np.float32(_NM_PER_NS_DWELL * self._fwhm_scale)
@@ -1063,17 +1044,10 @@ class ShotViewerWidget(QWidget):
         np.maximum(new_dwell_sizes, np.float32(1.0), out=new_dwell_sizes)
         new_dmax = float(new_dwell_sizes.max())
         new_dmin = float(new_dwell_sizes.min())
-        _t0c = _time.perf_counter()
-        print(f"[append-pre] bbox:{(_t0ab-_t0a)*1000:.0f}ms  pos:{(_t0b-_t0ab)*1000:.0f}ms  "
-              f"dwell:{(_t0c-_t0b)*1000:.0f}ms  total:{(_t0c-_t0)*1000:.0f}ms")
-
-        _ta = _time.perf_counter()
 
         # Positions
         self._all_positions = np.concatenate([self._all_positions, new_pos])
         self._positions = self._all_positions
-
-        _tb = _time.perf_counter()
 
         # Sizes — if existing was uniform, check whether it still is
         if self._uniform_size is not None:
@@ -1090,21 +1064,13 @@ class ShotViewerWidget(QWidget):
 
         self._max_shot_size = max(self._max_shot_size, new_dmax)
 
-        _tc = _time.perf_counter()
-
         # Raw dwells (needed when fwhm_scale changes)
         self._raw_dwells = np.concatenate([self._raw_dwells, new_data.dwell])
-
-        _td = _time.perf_counter()
 
         # Priorities for new shots — fresh random (no fixed seed needed)
         rng = np.random.default_rng()
         new_priorities = rng.random(n_new, dtype=np.float32)
         self._shot_priority = np.concatenate([self._shot_priority, new_priorities])
-
-        _te = _time.perf_counter()
-        print(f"[append-prep] pos:{(_tb-_ta)*1000:.0f}ms  sizes:{(_tc-_tb)*1000:.0f}ms  "
-              f"dwells:{(_td-_tc)*1000:.0f}ms  priority:{(_te-_td)*1000:.0f}ms")
 
         # Bounding box — extend using values computed before concatenations
         self._data_xmin = min(self._data_xmin, float(new_pos_min[0]))
@@ -1118,8 +1084,6 @@ class ShotViewerWidget(QWidget):
         # self._raw_dwells directly, so no need to maintain merged x/y/dwell
         # arrays.  Only the count needs updating for bounds checks.
         self._data.count += n_new
-
-        _t1 = _time.perf_counter()
 
         # ── Reset selection state ────────────────────────────────────────────
         self._kdtree = None
@@ -1166,11 +1130,6 @@ class ShotViewerWidget(QWidget):
         # Recompute stride/alpha for the current camera — _upload_all_shots uses a
         # static initial stride and doesn't know the zoom level.
         self._shot_decim_timer.start()
-
-        _t2 = _time.perf_counter()
-        n_total = len(self._all_positions)
-        print(f"[append] prep: {(_t1-_t0)*1000:.0f}ms  upload: {(_t2-_t1)*1000:.0f}ms  "
-              f"total: {(_t2-_t0)*1000:.0f}ms  ({n_new:,} new, {n_total:,} total)")
 
     def set_stripe_regions(self, regions: list[dict]) -> None:
         """Set stripe region metadata for hover-activated rectangle display."""
