@@ -2605,7 +2605,10 @@ class ShotViewerWidget(QWidget):
         """Highlight all box-selected shots and emit the signal."""
         # Always include any locked (file-selected) indices
         if self._locked_indices is not None and len(self._locked_indices):
-            indices = np.unique(np.concatenate([self._locked_indices, indices])).astype(np.intp)
+            if len(indices) == 0:
+                indices = self._locked_indices
+            elif indices is not self._locked_indices:
+                indices = np.unique(np.concatenate([self._locked_indices, indices])).astype(np.intp)
         # Clear any single-shot selection
         if self._selected_idx is not None:
             self._selected_idx = None
