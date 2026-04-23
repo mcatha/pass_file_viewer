@@ -437,6 +437,9 @@ class _FiducialOverlay(QWidget):
         self.setStyleSheet("background: transparent;")
         # List of (cx, cy, arm_px, circle_r_px, label)
         self.markers: list[tuple[float, float, float, float, str]] = []
+        # Screen-space unit vectors along the data X and Y axes
+        self.axis_x: tuple[float, float] = (1.0, 0.0)
+        self.axis_y: tuple[float, float] = (0.0, -1.0)
 
     def paintEvent(self, event) -> None:  # noqa: N802
         if not self.markers:
@@ -447,9 +450,13 @@ class _FiducialOverlay(QWidget):
         pen.setCapStyle(Qt.PenCapStyle.FlatCap)
         p.setPen(pen)
         p.setBrush(Qt.BrushStyle.NoBrush)
+        ax, ay = self.axis_x
+        bx, by = self.axis_y
         for cx, cy, arm_px, circle_r_px, label in self.markers:
-            p.drawLine(QPointF(cx - arm_px, cy), QPointF(cx + arm_px, cy))
-            p.drawLine(QPointF(cx, cy - arm_px), QPointF(cx, cy + arm_px))
+            p.drawLine(QPointF(cx - arm_px*ax, cy - arm_px*ay),
+                       QPointF(cx + arm_px*ax, cy + arm_px*ay))
+            p.drawLine(QPointF(cx - arm_px*bx, cy - arm_px*by),
+                       QPointF(cx + arm_px*bx, cy + arm_px*by))
             p.drawEllipse(QPointF(cx, cy), circle_r_px, circle_r_px)
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QBrush(_FIDUCIAL_PEN_COLOR))
@@ -1055,6 +1062,23 @@ class ShotViewerWidget(QWidget):
         arm_px    = max(5.0, _FIDUCIAL_ARM_NM / nm_per_px)
         circle_px = max(3.0, _FIDUCIAL_CIRCLE_NM / nm_per_px)
 
+        # Screen-space unit vectors for data X and Y axes (rotation-aware)
+        try:
+            tr = self._canvas.scene.node_transform(self._visual_root)
+            step = max(float(self._camera.rect.width),
+                       float(self._camera.rect.height), 1.0) * 0.1
+            o0  = tr.imap([0.0,  0.0,  0, 1])
+            px0 = tr.imap([step, 0.0,  0, 1])
+            py0 = tr.imap([0.0,  step, 0, 1])
+            def _unit(dx, dy):
+                n = _math.hypot(dx, dy)
+                return (1.0, 0.0) if n < 1e-12 else (dx / n, dy / n)
+            axis_x = _unit(float(px0[0]) - float(o0[0]), float(px0[1]) - float(o0[1]))
+            axis_y = _unit(float(py0[0]) - float(o0[0]), float(py0[1]) - float(o0[1]))
+        except Exception:
+            axis_x = (1.0, 0.0)
+            axis_y = (0.0, -1.0)
+
         cw = self._canvas.native.width()
         ch = self._canvas.native.height()
         margin = arm_px + circle_px + 20
@@ -1070,6 +1094,8 @@ class ShotViewerWidget(QWidget):
             if -margin <= cx <= cw + margin and -margin <= cy <= ch + margin:
                 markers.append((cx, cy, arm_px, circle_px, name))
 
+        self._fiducial_overlay.axis_x = axis_x
+        self._fiducial_overlay.axis_y = axis_y
         self._fiducial_overlay.markers = markers
         self._fiducial_overlay.resize(cw, ch)
         self._fiducial_overlay.update()
