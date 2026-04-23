@@ -2328,7 +2328,7 @@ class ShotViewerWidget(QWidget):
                 self._sel_lines.visible = False
                 self._tooltip.setVisible(False)
                 self._hover_tooltip.setVisible(False)
-                self.box_selected.emit([])
+                self.box_selected.emit(self._box_selected_indices if self._locked_indices is not None else [])
             else:
                 # Select new shot
                 self._selected_idx = idx
@@ -2362,7 +2362,7 @@ class ShotViewerWidget(QWidget):
                 if screen_pos is not None:
                     self._tooltip.move(int(screen_pos[0]) + 20, int(screen_pos[1]) - self._tooltip.height() - 10)
                 self._tooltip.setVisible(True)
-                self.box_selected.emit([idx])
+                self.box_selected.emit(self._box_selected_indices if self._locked_indices is not None else [idx])
         else:
             # Clicked empty space → deselect
             self._selected_idx = None
@@ -2370,7 +2370,7 @@ class ShotViewerWidget(QWidget):
             self._sel_lines.visible = False
             self._tooltip.setVisible(False)
             self._hover_tooltip.setVisible(False)
-            self.box_selected.emit([])
+            self.box_selected.emit(self._box_selected_indices if self._locked_indices is not None else [])
 
         self._canvas.update()
         event.handled = True
