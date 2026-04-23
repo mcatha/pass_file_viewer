@@ -9,30 +9,30 @@ from pathlib import Path
 # Beam positions and full (unclipped) cell boundaries, all in mm.
 # Number suffix → X position; letter → Y position.
 BEAMS = [
-    # name    beam_X   beam_Y   x_cell_start  x_cell_end  y_cell_start  y_cell_end
-    # A row (Y = +130 mm); 3 beams
-    ('A2',   75,  130,   37.5,  112.5,   97.5,  162.5),
-    ('A3',    0,  130,  -37.5,   37.5,   97.5,  162.5),
-    ('A4',  -75,  130, -112.5,  -37.5,   97.5,  162.5),
-    # B row (Y = +65 mm); 4 beams
-    ('B1',  112.5,  65,   75,  150,   32.5,   97.5),
-    ('B2',   37.5,  65,    0,   75,   32.5,   97.5),
-    ('B3',  -37.5,  65,  -75,    0,   32.5,   97.5),
-    ('B4', -112.5,  65, -150,  -75,   32.5,   97.5),
+    # name    beam_X    beam_Y   x_cell_start  x_cell_end  y_cell_start  y_cell_end
+    # A row (Y = +132 mm); 3 beams
+    ('A2',   75.1,  132,   37.55,  112.65,   99,  165),
+    ('A3',    0,    132,  -37.55,   37.55,   99,  165),
+    ('A4',  -75.1,  132, -112.65,  -37.55,   99,  165),
+    # B row (Y = +66 mm); 4 beams
+    ('B1',  112.65,  66,   75.1,  150.2,   33,   99),
+    ('B2',   37.55,  66,    0,     75.1,   33,   99),
+    ('B3',  -37.55,  66,  -75.1,    0,     33,   99),
+    ('B4', -112.65,  66, -150.2,  -75.1,   33,   99),
     # C row (Y = 0 mm); 4 beams
-    ('C1',  112.5,   0,   75,  150,  -32.5,   32.5),
-    ('C2',   37.5,   0,    0,   75,  -32.5,   32.5),
-    ('C3',  -37.5,   0,  -75,    0,  -32.5,   32.5),
-    ('C4', -112.5,   0, -150,  -75,  -32.5,   32.5),
-    # D row (Y = −65 mm); 4 beams
-    ('D1',  112.5, -65,   75,  150,  -97.5,  -32.5),
-    ('D2',   37.5, -65,    0,   75,  -97.5,  -32.5),
-    ('D3',  -37.5, -65,  -75,    0,  -97.5,  -32.5),
-    ('D4', -112.5, -65, -150,  -75,  -97.5,  -32.5),
-    # E row (Y = −130 mm); 3 beams
-    ('E2',   75, -130,   37.5,  112.5, -162.5,  -97.5),
-    ('E3',    0, -130,  -37.5,   37.5, -162.5,  -97.5),
-    ('E4',  -75, -130, -112.5,  -37.5, -162.5,  -97.5),
+    ('C1',  112.65,   0,   75.1,  150.2,  -33,   33),
+    ('C2',   37.55,   0,    0,     75.1,  -33,   33),
+    ('C3',  -37.55,   0,  -75.1,    0,    -33,   33),
+    ('C4', -112.65,   0, -150.2,  -75.1,  -33,   33),
+    # D row (Y = −66 mm); 4 beams
+    ('D1',  112.65, -66,   75.1,  150.2,  -99,  -33),
+    ('D2',   37.55, -66,    0,     75.1,  -99,  -33),
+    ('D3',  -37.55, -66,  -75.1,    0,    -99,  -33),
+    ('D4', -112.65, -66, -150.2,  -75.1,  -99,  -33),
+    # E row (Y = −132 mm); 3 beams
+    ('E2',   75.1, -132,   37.55,  112.65, -165,  -99),
+    ('E3',    0,   -132,  -37.55,   37.55, -165,  -99),
+    ('E4',  -75.1, -132, -112.65,  -37.55, -165,  -99),
 ]
 
 fig, ax = plt.subplots(figsize=(14, 10))
@@ -50,7 +50,7 @@ for name, bx, by, xs, xe, ys, ye in BEAMS:
     ax.plot(bx, by, '+', color='#c00', markersize=8, markeredgewidth=1.5, zorder=4)
 
 # Horizontal grid lines at shared Y row boundaries
-for y in [-162.5, -97.5, -32.5, 32.5, 97.5, 162.5]:
+for y in [-165, -99, -33, 33, 99, 165]:
     ax.axhline(y, color='#bbb', linewidth=0.5, zorder=0)
 
 # Wafer circle (300 mm diameter)
@@ -59,7 +59,7 @@ wafer = plt.Circle((0, 0), 150, fill=False, edgecolor='#888', linewidth=1.5,
 ax.add_patch(wafer)
 
 # 200 mm wafer outline centred on C2 (37.5, 0)
-wafer200 = plt.Circle((37.5, 0), 100, fill=False, edgecolor='#e07000', linewidth=1.5,
+wafer200 = plt.Circle((37.55, 0), 100, fill=False, edgecolor='#e07000', linewidth=1.5,
                       linestyle='--', zorder=6, label='Wafer edge (200 mm), centred on C2')
 ax.add_patch(wafer200)
 
@@ -68,8 +68,8 @@ beam_marker = plt.Line2D([0], [0], marker='+', color='#c00', linestyle='none',
                          markersize=9, markeredgewidth=1.5, label='Beam initial position')
 ax.legend(handles=[wafer, wafer200, beam_marker], loc='lower right', fontsize=10)
 
-ax.set_xlim(-175, 175)
-ax.set_ylim(-175, 175)
+ax.set_xlim(-180, 180)
+ax.set_ylim(-180, 180)
 ax.set_aspect('equal')
 ax.set_xlabel('Wafer X (mm)', fontsize=11)
 ax.set_ylabel('Wafer Y (mm)', fontsize=11)
