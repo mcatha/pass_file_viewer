@@ -63,9 +63,6 @@ _SHOT1_LABEL_STYLE = (
     "font-size: 11px;"
 )
 
-# Unit circle for wafer outline (257 points → 256 segments, closed)
-_theta = np.linspace(0, 2 * np.pi, 257)
-_UNIT_CIRCLE = np.column_stack([np.cos(_theta), np.sin(_theta)])
 _ARROW_COLOR = QColor(200, 200, 200, 220)
 _LABEL_COLOR = QColor(255, 255, 255, 255)    # pure white
 _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
@@ -427,6 +424,37 @@ class _AxisArrowOverlay(QWidget):
         p.end()
 
 
+class _WaferOutlineOverlay(QWidget):
+    """Transparent overlay that paints a wafer outline circle with glow falloff."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
+        self.center: tuple[float, float] | None = None
+        self.radius_px: float = 0.0
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        if self.center is None or self.radius_px < 1.0:
+            return
+        cx, cy = self.center
+        r = self.radius_px
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        # Outer glow — wide, very transparent
+        p.setPen(QPen(QColor(255, 80, 80, 40), 10.0))
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        # Mid halo
+        p.setPen(QPen(QColor(255, 80, 80, 110), 3.5))
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        # Bright core
+        p.setPen(QPen(QColor(255, 110, 110, 210), 1.5))
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        p.end()
+
+
 class _FiducialOverlay(QWidget):
     """Transparent overlay that paints column-position fiducials."""
 
@@ -631,17 +659,10 @@ class ShotViewerWidget(QWidget):
             np.zeros((1, 2), dtype=np.float32),
             size=8, face_color=(1, 1, 1, 0.9), edge_width=0,
         )
-        # Wafer outline circle — three glow layers for alpha falloff
+        # Wafer outline circle — QPainter overlay with glow falloff
         self._wafer_diameter_nm: float | None = None
-        _empty2 = np.zeros((2, 2), dtype=np.float64)
-        self._wafer_outline_layers = [
-            visuals.Line(_empty2, color=(1.0, 0.25, 0.25, 0.20), width=5,
-                         connect='strip', antialias=True, parent=self._visual_root),
-            visuals.Line(_empty2, color=(1.0, 0.18, 0.18, 0.85), width=1.5,
-                         connect='strip', antialias=True, parent=self._visual_root),
-        ]
-        for _l in self._wafer_outline_layers:
-            _l.visible = False
+        self._wafer_outline_overlay = _WaferOutlineOverlay(self._canvas.native)
+        self._wafer_outline_overlay.show()
         # Layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -972,7 +993,7 @@ class ShotViewerWidget(QWidget):
 
         # Reposition wafer outline if active (centroid changed)
         if self._wafer_diameter_nm is not None:
-            self.set_wafer_outline(self._wafer_diameter_nm)
+            self._reposition_wafer_outline()
 
     def set_stripe_regions(self, regions: list[dict]) -> None:
         """Set stripe region metadata for hover-activated rectangle display."""
@@ -1029,16 +1050,10 @@ class ShotViewerWidget(QWidget):
         """Show or hide a wafer outline circle of the given diameter (nm)."""
         self._wafer_diameter_nm = diameter_nm
         if diameter_nm is None:
-            for layer in self._wafer_outline_layers:
-                layer.visible = False
+            self._wafer_outline_overlay.center = None
+            self._wafer_outline_overlay.update()
             return
-        radius = diameter_nm / 2.0
-        center = -self._origin
-        pts = _UNIT_CIRCLE * radius + center
-        data = pts.astype(np.float64)
-        for layer in self._wafer_outline_layers:
-            layer.set_data(data)
-            layer.visible = True
+        self._reposition_wafer_outline()
 
     def set_column_positions(self, array_type: str | None) -> None:
         """Show fiducial markers for 'MB200', 'MB300', or None to hide."""
@@ -1099,6 +1114,30 @@ class ShotViewerWidget(QWidget):
         self._fiducial_overlay.markers = markers
         self._fiducial_overlay.resize(cw, ch)
         self._fiducial_overlay.update()
+
+    def _reposition_wafer_outline(self) -> None:
+        """Recompute the wafer outline screen position and repaint the overlay."""
+        ov = self._wafer_outline_overlay
+        if self._wafer_diameter_nm is None or self._origin is None:
+            ov.center = None
+            ov.update()
+            return
+        sc = self._data_to_canvas(np.array([-self._origin[0], -self._origin[1]]))
+        if sc is None:
+            ov.center = None
+            ov.update()
+            return
+        try:
+            nm_per_px = self._camera.rect.width / max(self._canvas.native.width(), 1)
+        except Exception:
+            nm_per_px = 1e6
+        radius_px = (self._wafer_diameter_nm / 2.0) / nm_per_px
+        cw = self._canvas.native.width()
+        ch = self._canvas.native.height()
+        ov.center = (float(sc[0]), float(sc[1]))
+        ov.radius_px = radius_px
+        ov.resize(cw, ch)
+        ov.update()
 
     def _build_kdtree_async(self, positions: np.ndarray, rendered_indices: np.ndarray | None) -> None:
         """Build the KD-tree on a worker thread."""
@@ -2006,6 +2045,7 @@ class ShotViewerWidget(QWidget):
         self._position_pinned_labels()
         self._reposition_shot1_labels()
         self._reposition_fiducials()
+        self._reposition_wafer_outline()
 
         # Throttled shot stride update on zoom
         if self._all_positions is not None:

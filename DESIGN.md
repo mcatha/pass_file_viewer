@@ -523,14 +523,17 @@ Fields: total shots in file, visible (viewport-culled), active stride, rendered 
 
 ### Wafer outline
 
-**View → Wafer Outline** provides a submenu of standard wafer diameters. The circle is drawn as two layered `visuals.Line` passes to produce a soft alpha falloff across the stroke:
+**View → Wafer Outline** provides a submenu of standard wafer diameters. The circle is rendered by `_WaferOutlineOverlay`, a transparent `QWidget` child of the GL canvas (same pattern as `_FiducialOverlay`). Three concentric `QPainter.drawEllipse` strokes produce a real alpha falloff:
 
-| Layer | Width | Colour (RGBA) | Purpose |
-|-------|-------|---------------|---------|
-| Outer glow | 5 px | `(1.0, 0.25, 0.25, 0.20)` | Soft halo |
-| Core | 1.5 px | `(1.0, 0.18, 0.18, 0.85)` | Bright centre line |
+| Pass | Width | Colour (RGBA) | Purpose |
+|------|-------|---------------|---------|
+| Outer glow | 10 px | `(255, 80, 80, 40)` | Wide soft halo |
+| Mid halo | 3.5 px | `(255, 80, 80, 110)` | Intermediate layer |
+| Core | 1.5 px | `(255, 110, 110, 210)` | Bright centre line |
 
-Both layers share 257 vertices (256 closed segments). The outline repositions automatically when new data is loaded. Selecting "None" hides both layers.
+The overlay is updated by `_reposition_wafer_outline()`, called from `__on_camera_change_inner` (every pan/zoom) and from `set_wafer_outline()`. Screen-space centre is computed via `_data_to_canvas(-self._origin)` and radius via `diameter_nm / 2 / nm_per_px`.
+
+**Why QPainter not vispy Line:** Two vispy Line layers composited on identical pixel geometry don't produce visible width-based falloff — the GPU blends them on the same pixels instead of extending the stroke outward. `QPainter.drawEllipse` with different stroke widths draws concentric rings at different radii, which is the correct rendering.
 
 ### Stripe region hover and file selection
 
