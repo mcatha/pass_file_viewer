@@ -42,32 +42,34 @@ DWELL_NS      = 16_383    # max 14-bit value
 
 HALF = PITCH_NM // 2      # 325 nm — shots centred in grid cells
 
-# ── MB300 column layout ───────────────────────────────────────────────────────
-_COL_OFFSETS_NM = [
-    -130_000_000,
-     -65_000_000,
-           0,
-      65_000_000,
-     130_000_000,
+# ── MB300 column layout (from viewer_widget._MB300_FIDUCIALS) ─────────────────
+# Columns A–E at X = −130, −65, 0, +65, +130 mm.
+_COLUMNS_NM = [
+    ('A', -130_000_000),
+    ('B',  -65_000_000),
+    ('C',           0),
+    ('D',   65_000_000),
+    ('E',  130_000_000),
 ]
 
 # Section X boundaries: midpoints between adjacent columns, clamped to logo
 _BOUNDS = [LOGO_X_MIN]
-for _i in range(len(_COL_OFFSETS_NM) - 1):
-    _BOUNDS.append((_COL_OFFSETS_NM[_i] + _COL_OFFSETS_NM[_i + 1]) // 2)
+for _i in range(len(_COLUMNS_NM) - 1):
+    _BOUNDS.append((_COLUMNS_NM[_i][1] + _COLUMNS_NM[_i + 1][1]) // 2)
 _BOUNDS.append(LOGO_X_MAX)
 # _BOUNDS: [-125e6, -97.5e6, -32.5e6, +32.5e6, +97.5e6, +125e6]
 
 # (col_id, col_offset_nm, section_x_start_nm, section_x_end_nm)
 COLUMNS = [
-    (_i + 1, _COL_OFFSETS_NM[_i], _BOUNDS[_i], _BOUNDS[_i + 1])
-    for _i in range(len(_COL_OFFSETS_NM))
+    (_id, _off, _BOUNDS[_i], _BOUNDS[_i + 1])
+    for _i, (_id, _off) in enumerate(_COLUMNS_NM)
 ]
 
 # ── Master pass sweep ─────────────────────────────────────────────────────────
-# Stage positions P_X such that C3 (offset 0) sweeps across its section
-# [−32.5 mm, +32.5 mm].  At P_X = −32_500_000, C3 starts; C5 also starts.
-# At P_X = +5_000_000, C1 starts.  Total 1_084 steps.
+# Sweep driven by the central section (B, C, D span 65 mm each).
+# P_X_FIRST = −32.5 mm: B, C, D, E all activate on pass 1.
+# Column A activates at pass 626 (P_X = +5 mm).
+# N_MASTER = ceil(65_000_000 / 60_000) = 1_084.
 P_X_FIRST = -32_500_000   # nm — first master stage position
 N_MASTER   = 1_084        # ceil(65_000_000 / 60_000)
 
@@ -168,7 +170,7 @@ for n in range(1, N_MASTER + 1):
                 | (xl << np.uint64(16)) \
                 | (yl << np.uint64(32))
 
-        fname = OUT_DIR / f"C{col_id}_{n:04d}.pass"
+        fname = OUT_DIR / f"{col_id}_{n:04d}.pass"
         with open(fname, "wb") as f:
             f.write(_pack_header(n, x_start, x_end - x_start, len(sy)))
             f.write(records.tobytes())
