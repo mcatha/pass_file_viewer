@@ -36,7 +36,7 @@ LOGO_X_MIN = -(LOGO_WIDTH_NM  // 2)   # −125_000_000 nm
 LOGO_X_MAX =   LOGO_WIDTH_NM  // 2    # +125_000_000 nm
 LOGO_Y_MIN = -(LOGO_HEIGHT_NM // 2)   # ≈ −30_208_333 nm
 
-PITCH_NM      = 650       # shot pitch → ≈ 20 % overlap at 812 nm FWHM beam
+PITCH_NM      = 1270      # shot pitch → ≈ 20 % overlap at 1587 nm FWHM beam
 PASS_WIDTH_NM = 60_000    # 60 µm — stage X step between passes
 DWELL_NS      = 16_383    # max 14-bit value
 
