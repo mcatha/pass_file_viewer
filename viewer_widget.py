@@ -654,14 +654,19 @@ class ShotViewerWidget(QWidget):
             np.zeros((1, 2), dtype=np.float32),
             size=8, face_color=(1, 1, 1, 0.9), edge_width=0,
         )
-        # Wafer outline circle
+        # Wafer outline circle — three glow layers for alpha falloff
         self._wafer_diameter_nm: float | None = None
-        self._wafer_outline = visuals.Line(
-            pos=np.zeros((2, 2), dtype=np.float64),
-            color=(1.0, 0.2, 0.2, 0.9), width=3, connect='strip',
-            antialias=True, parent=self._visual_root,
-        )
-        self._wafer_outline.visible = False
+        _empty2 = np.zeros((2, 2), dtype=np.float64)
+        self._wafer_outline_layers = [
+            visuals.Line(_empty2, color=(1.0, 0.25, 0.25, 0.07), width=14,
+                         connect='strip', antialias=True, parent=self._visual_root),
+            visuals.Line(_empty2, color=(1.0, 0.22, 0.22, 0.22), width=6,
+                         connect='strip', antialias=True, parent=self._visual_root),
+            visuals.Line(_empty2, color=(1.0, 0.18, 0.18, 0.60), width=1.5,
+                         connect='strip', antialias=True, parent=self._visual_root),
+        ]
+        for _l in self._wafer_outline_layers:
+            _l.visible = False
         # Layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1048,13 +1053,16 @@ class ShotViewerWidget(QWidget):
         """Show or hide a wafer outline circle of the given diameter (nm)."""
         self._wafer_diameter_nm = diameter_nm
         if diameter_nm is None:
-            self._wafer_outline.visible = False
+            for layer in self._wafer_outline_layers:
+                layer.visible = False
             return
         radius = diameter_nm / 2.0
         center = -self._origin
         pts = _UNIT_CIRCLE * radius + center
-        self._wafer_outline.set_data(pts.astype(np.float64))
-        self._wafer_outline.visible = True
+        data = pts.astype(np.float64)
+        for layer in self._wafer_outline_layers:
+            layer.set_data(data)
+            layer.visible = True
 
     def set_column_positions(self, array_type: str | None) -> None:
         """Show fiducial markers for 'MB200', 'MB300', or None to hide."""
