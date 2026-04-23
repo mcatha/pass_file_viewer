@@ -8,7 +8,7 @@ in tab-separated format suitable for pasting into spreadsheets.
 from __future__ import annotations
 
 import numpy as np
-from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, QObject, pyqtSignal
+from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex, QThread, QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QKeySequence, QAction
 from PyQt6.QtWidgets import (
     QWidget,
@@ -140,6 +140,7 @@ class SelectionPane(QWidget):
     """Side pane showing box-selected shot data in a copyable table."""
 
     _COLUMNS = _ShotTableModel._COLUMNS
+    content_ready = pyqtSignal(int)   # emits required pixel width after data loads
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -223,6 +224,15 @@ class SelectionPane(QWidget):
     def _on_sort_ready(self, sorted_indices: np.ndarray) -> None:
         self._model.set_sorted(self._data, sorted_indices)
         self._header_label.setText(f"Selection  ({self._pending_count:,} shots)")
+        QTimer.singleShot(0, self._emit_content_width)
+
+    def _emit_content_width(self) -> None:
+        header = self._table.horizontalHeader()
+        col_w = sum(header.sectionSize(i) for i in range(header.count()))
+        scrollbar_w = self._table.verticalScrollBar().sizeHint().width()
+        margins = self.contentsMargins()
+        w = col_w + scrollbar_w + margins.left() + margins.right() + 8
+        self.content_ready.emit(w)
 
     def _on_sort_thread_done(self) -> None:
         self._sort_thread = None

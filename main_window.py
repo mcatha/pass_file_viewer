@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
         )
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._selection_dock)
         self._selection_dock.setVisible(False)  # hidden until first box selection
+        self._selection_pane.content_ready.connect(self._fit_selection_dock)
 
         # Connect box-selection signal
         self._viewer.box_selected.connect(self._on_box_selection)
@@ -1108,6 +1109,14 @@ class MainWindow(QMainWindow):
         self._selection_pane.update_selection(indices)
         if len(indices):
             self._selection_dock.setVisible(True)
+
+    def _fit_selection_dock(self, width: int) -> None:
+        """Resize the selection dock to exactly fit its column content."""
+        screen = self.screen()
+        if screen is not None:
+            max_w = screen.availableGeometry().width() // 2
+            width = min(width, max_w)
+        self.resizeDocks([self._selection_dock], [width], Qt.Orientation.Horizontal)
 
     # ── file selection (right-click menu) ───────────────────────────
 
