@@ -2050,7 +2050,8 @@ class ShotViewerWidget(QWidget):
             aabb = self._stripe_aabbs[idx]
             tr_corner = np.array([aabb[2], aabb[3]], dtype=np.float64)
             screen = self._data_to_canvas(tr_corner)
-            tw, th = label.width(), label.height()
+            tw = label.width() or label.sizeHint().width()
+            th = label.height() or label.sizeHint().height()
             if screen is not None and 0 <= screen[0] + pad + tw <= cw:
                 nat_x = int(screen[0]) + pad
                 nat_y = int(screen[1]) - th - pad
