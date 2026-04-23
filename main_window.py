@@ -215,6 +215,10 @@ class MainWindow(QMainWindow):
         select_all_act.triggered.connect(self._on_select_all_passes)
         view_menu.addAction(select_all_act)
 
+        deselect_all_act = QAction("&Deselect All Passes", self)
+        deselect_all_act.triggered.connect(self._on_deselect_all_passes)
+        view_menu.addAction(deselect_all_act)
+
         view_menu.addSeparator()
 
         # ── FWHM scale slider ──────────────────────────────────────
@@ -1132,6 +1136,12 @@ class MainWindow(QMainWindow):
         offset = sum(self._loaded_files[i][0].count for i in range(file_idx))
         count = self._loaded_files[file_idx][0].count
         return np.arange(offset, offset + count, dtype=np.intp)
+
+    def _on_deselect_all_passes(self) -> None:
+        for idx in list(self._file_selected):
+            self._viewer.unpin_stripe(idx)
+        self._file_selected.clear()
+        self._apply_file_selection()
 
     def _on_select_all_passes(self) -> None:
         if not self._loaded_files:
