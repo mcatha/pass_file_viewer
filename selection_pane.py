@@ -105,8 +105,11 @@ class _ShotTableModel(QAbstractTableModel):
         return len(self._COLUMNS)
 
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
-        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
-            return self._COLUMNS[section]
+        if orientation == Qt.Orientation.Horizontal:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return self._COLUMNS[section]
+            if role == Qt.ItemDataRole.TextAlignmentRole:
+                return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         return None
 
     def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
@@ -174,6 +177,9 @@ class SelectionPane(QWidget):
         self._table.horizontalHeader().setStretchLastSection(False)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self._table.horizontalHeader().setResizeContentsPrecision(50)
+        self._table.horizontalHeader().setDefaultAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
         self._table.setAlternatingRowColors(True)
         self._table.setStyleSheet(
             "QTableView { font-family: Consolas, monospace; font-size: 12px; }"
