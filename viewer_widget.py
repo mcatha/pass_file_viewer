@@ -646,6 +646,7 @@ class ShotViewerWidget(QWidget):
         self._box_selected_indices: np.ndarray = np.empty(0, dtype=np.intp)  # box-selected shot indices
         self._locked_indices: np.ndarray | None = None  # file-selected indices; immune to click/box clear
         self._lines_data_set: bool = False           # True once line data is uploaded
+        self._file_break_offsets: list[int] = []     # cumulative shot offsets per file (for line breaks)
 
         self._all_positions: np.ndarray | None = None  # full (N,2) float32
         self._all_sizes: np.ndarray | float | None = None  # full sizes
@@ -741,6 +742,7 @@ class ShotViewerWidget(QWidget):
         self._selected_idx = None
         self._box_selected_indices = np.empty(0, dtype=np.intp)
         self._locked_indices = None
+        self._file_break_offsets = []        # reset on new load
         self._face_colors = _SHOT_COLOR
         self._sel_marker.visible = False
         self._sel_lines.visible = False
@@ -828,7 +830,7 @@ class ShotViewerWidget(QWidget):
 
         # Lines data is DEFERRED until the user toggles them on (saves GPU upload)
         if self._lines.visible:
-            self._lines.set_data(self._positions, color=_LINE_COLOR, width=1)
+            self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
             self._lines_data_set = True
 
         # Reposition origin marker and axis lines in centroid-shifted space
@@ -979,11 +981,36 @@ class ShotViewerWidget(QWidget):
         self._box_sel_thread = None
         self._box_sel_worker = None
 
+    def set_file_break_offsets(self, offsets: list[int]) -> None:
+        """Set cumulative shot offsets (one per file) so connecting lines break at file boundaries."""
+        self._file_break_offsets = offsets
+        self._lines_data_set = False  # force re-upload on next set_lines_visible / set_line_color
+        if self._lines.visible and self._positions is not None:
+            self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
+            self._lines_data_set = True
+            self._canvas.update()
+
+    def _lines_with_breaks(self) -> np.ndarray:
+        """Return positions array with NaN rows inserted at file boundaries to break the polyline."""
+        pos = self._positions
+        offsets = self._file_break_offsets
+        if pos is None or len(offsets) <= 1:
+            return pos if pos is not None else np.empty((0, 2), dtype=np.float32)
+        nan_row = np.array([[np.nan, np.nan]], dtype=np.float32)
+        parts = []
+        prev = 0
+        for offset in offsets[1:]:
+            parts.append(pos[prev:offset])
+            parts.append(nan_row)
+            prev = offset
+        parts.append(pos[prev:])
+        return np.concatenate(parts)
+
     def set_lines_visible(self, visible: bool) -> None:
         """Toggle shot connection lines."""
         if visible and self._positions is not None:
             if not self._lines_data_set:
-                self._lines.set_data(self._positions, color=_LINE_COLOR, width=1)
+                self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
                 self._lines_data_set = True
         self._lines.visible = visible
         self._update_sel_lines()
@@ -1108,7 +1135,7 @@ class ShotViewerWidget(QWidget):
         global _LINE_COLOR
         _LINE_COLOR = rgba
         if self._lines.visible and self._positions is not None:
-            self._lines.set_data(self._positions, color=_LINE_COLOR, width=1)
+            self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
             self._canvas.update()
 
     @property
@@ -1677,6 +1704,12 @@ class ShotViewerWidget(QWidget):
         # Successor segments (idx → idx+1) for idx < n-1
         next_mask = idx_arr < (n - 1)
         next_idx = idx_arr[next_mask]
+
+        # Drop segments that cross file boundaries
+        if len(self._file_break_offsets) > 1:
+            break_arr = np.array(self._file_break_offsets[1:], dtype=np.intp)
+            prev_idx = prev_idx[~np.isin(prev_idx, break_arr)]
+            next_idx = next_idx[~np.isin(next_idx + 1, break_arr)]
 
         # Build interleaved start/end pairs
         parts = []
