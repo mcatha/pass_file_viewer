@@ -910,7 +910,9 @@ class ShotViewerWidget(QWidget):
 
         # Diameter in data units (nm): FWHM = dwell_ns * _NM_PER_NS_DWELL * _fwhm_scale
         self._raw_dwells = data.dwell
-        dwell_sizes = np.maximum(data.dwell * _NM_PER_NS_DWELL * self._fwhm_scale, 1.0).astype(np.float32)
+        dwell_sizes = np.empty(n, dtype=np.float32)
+        np.multiply(data.dwell, np.float32(_NM_PER_NS_DWELL * self._fwhm_scale), out=dwell_sizes)
+        np.maximum(dwell_sizes, np.float32(1.0), out=dwell_sizes)
         dmin_sz = dwell_sizes.min()
         dmax_sz = dwell_sizes.max()
         if dmax_sz > dmin_sz:
@@ -930,7 +932,7 @@ class ShotViewerWidget(QWidget):
         # Uniform random → perfectly proportional decimation across all shots.
         n_shots = len(self._positions)
         rng = np.random.default_rng(seed=42)
-        priority = rng.random(n_shots).astype(np.float32)          # [0, 1)
+        priority = rng.random(n_shots, dtype=np.float32)          # [0, 1)
 
         self._shot_priority = priority
         # Sort deferred to background thread — main thread stays responsive.
@@ -1037,9 +1039,12 @@ class ShotViewerWidget(QWidget):
         _t0b = _time.perf_counter()
         np.subtract(new_data.y, self._origin[1], out=new_pos[:, 1])
         _t0c = _time.perf_counter()
-        new_dwell_sizes = np.maximum(
-            new_data.dwell * _NM_PER_NS_DWELL * self._fwhm_scale, 1.0
-        ).astype(np.float32)
+        # Keep in float32 — multiplying float32 by a float64 scalar upcasts the
+        # entire array silently.  Cast the coefficient to float32 first.
+        _coef = np.float32(_NM_PER_NS_DWELL * self._fwhm_scale)
+        new_dwell_sizes = np.empty(n_new, dtype=np.float32)
+        np.multiply(new_data.dwell, _coef, out=new_dwell_sizes)
+        np.maximum(new_dwell_sizes, np.float32(1.0), out=new_dwell_sizes)
         _t0d = _time.perf_counter()
 
         n_existing = len(self._all_positions)
@@ -1082,7 +1087,7 @@ class ShotViewerWidget(QWidget):
 
         # Priorities for new shots — fresh random (no fixed seed needed)
         rng = np.random.default_rng()
-        new_priorities = rng.random(n_new).astype(np.float32)
+        new_priorities = rng.random(n_new, dtype=np.float32)
         self._shot_priority = np.concatenate([self._shot_priority, new_priorities])
 
         _te = _time.perf_counter()
@@ -1688,9 +1693,9 @@ class ShotViewerWidget(QWidget):
         if self._raw_dwells is None:
             return
         self._fwhm_scale = scale
-        dwell_sizes = np.maximum(
-            self._raw_dwells * _NM_PER_NS_DWELL * scale, 1.0
-        ).astype(np.float32)
+        dwell_sizes = np.empty(len(self._raw_dwells), dtype=np.float32)
+        np.multiply(self._raw_dwells, np.float32(_NM_PER_NS_DWELL * scale), out=dwell_sizes)
+        np.maximum(dwell_sizes, np.float32(1.0), out=dwell_sizes)
         dmin_sz = dwell_sizes.min()
         dmax_sz = dwell_sizes.max()
         if dmax_sz > dmin_sz:
