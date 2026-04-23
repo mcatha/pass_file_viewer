@@ -1194,7 +1194,7 @@ class ShotViewerWidget(QWidget):
         return sz
 
     def _box_sel_size(self, base_sz):
-        """Return box-selection marker size: same floor clamp as data, no stride inflation."""
+        """Return box-selection marker size matching data marker visual size."""
         dpp = self._get_data_per_px()
         if dpp is not None and dpp > 0:
             min_size = dpp * (4.0 if self._marker_mode == 'gaussian' else 1.0)
@@ -1204,15 +1204,7 @@ class ShotViewerWidget(QWidget):
                 sz = np.maximum(base_sz, min_size)
         else:
             sz = base_sz
-        sz = self._display_size(sz) * 1.05
-        # Ensure at least _MIN_SEL_PX screen pixels (same as click-select marker)
-        if dpp is not None and dpp > 0:
-            min_data = _MIN_SEL_PX * dpp
-            if np.isscalar(sz):
-                return max(sz, min_data)
-            else:
-                return np.maximum(sz, min_data)
-        return sz
+        return self._display_size(sz) * 1.05
 
     def set_selected_color(self, rgba: tuple[float, float, float, float]) -> None:
         """Change single-click selection colour."""
