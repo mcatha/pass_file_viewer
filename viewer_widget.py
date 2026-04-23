@@ -1269,16 +1269,20 @@ class ShotViewerWidget(QWidget):
             ov.center = None
             ov.update()
             return
-        sc = self._data_to_canvas(np.array([0.0, 0.0]))
+        sc = self._data_to_canvas(np.array([-self._origin[0], -self._origin[1]]))
         if sc is None:
             ov.center = None
             ov.update()
             return
-        try:
-            nm_per_px = self._camera.rect.width / max(self._canvas.native.width(), 1)
-        except Exception:
-            nm_per_px = 1e6
-        radius_px = (self._wafer_diameter_nm / 2.0) / nm_per_px
+        radius_nm = self._wafer_diameter_nm / 2.0
+        sc_edge = self._data_to_canvas(
+            np.array([-self._origin[0] + radius_nm, -self._origin[1]])
+        )
+        if sc_edge is None:
+            ov.center = None
+            ov.update()
+            return
+        radius_px = abs(float(sc_edge[0]) - float(sc[0]))
         cw = self._canvas.native.width()
         ch = self._canvas.native.height()
         ov.center = (float(sc[0]), float(sc[1]))
