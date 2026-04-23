@@ -2378,6 +2378,8 @@ class ShotViewerWidget(QWidget):
         if len(idx_arr) == 0 or self._positions is None:
             return
 
+        print(f"[SEL] _upload_box_sel_markers: {len(idx_arr)} box_selected, locked={self._locked_indices is not None}")
+
         if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX:
             # Small selection: viewport-cull so we only upload on-screen markers
             bounds = self._get_viewport_bounds()
@@ -2389,6 +2391,7 @@ class ShotViewerWidget(QWidget):
                 vis = ((sel_pos[:, 0] >= xmin - mx) & (sel_pos[:, 0] <= xmax + mx) &
                        (sel_pos[:, 1] >= ymin - my) & (sel_pos[:, 1] <= ymax + my))
                 idx_arr = idx_arr[vis]
+                print(f"[SEL]   after viewport cull ({xmin:.0f},{ymin:.0f})-({xmax:.0f},{ymax:.0f}): {len(idx_arr)} remain")
             if len(idx_arr) == 0:
                 self._box_sel_markers.set_data(np.empty((0, 2)))
                 return
@@ -2413,6 +2416,7 @@ class ShotViewerWidget(QWidget):
             face_color=_BOX_SELECTED_COLOR,
             edge_width=0,
         )
+        print(f"[SEL]   uploaded {len(sub)} markers (stride={stride})")
 
     def _apply_box_selection(self, indices: np.ndarray) -> None:
         """Highlight all box-selected shots and emit the signal."""
