@@ -107,7 +107,7 @@ class _ShotTableModel(QAbstractTableModel):
                 return f"{self._data.dwell[idx]:,.0f}"
 
         elif role == Qt.ItemDataRole.TextAlignmentRole:
-            return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+            return Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
 
         return None
 
