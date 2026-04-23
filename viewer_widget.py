@@ -2770,8 +2770,9 @@ class ShotViewerWidget(QWidget):
             QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
             if self._box_sel_worker is not None:
                 self._box_sel_worker.finished.disconnect(self._on_box_sel_ready)
+                self._box_sel_thread.finished.disconnect(self._on_box_sel_thread_done)
                 self._box_sel_thread.quit()
-                self._box_sel_thread.wait()
+                # No wait() — stale signals are disconnected; new refs set below
             thread = QThread(self)
             worker = _BoxSelWorker(self._positions, quad)
             worker.moveToThread(thread)
