@@ -2378,8 +2378,9 @@ class ShotViewerWidget(QWidget):
         if len(idx_arr) == 0 or self._positions is None:
             return
 
-        if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX:
-            # Small selection: viewport-cull so we only upload on-screen markers
+        # Viewport-cull small selections — but skip culling for locked (file-selected)
+        # indices so all file shots remain highlighted regardless of current view.
+        if len(idx_arr) <= _BOX_SEL_VIEWPORT_CULL_MAX and self._locked_indices is None:
             bounds = self._get_viewport_bounds()
             if bounds is not None:
                 xmin, xmax, ymin, ymax = bounds
