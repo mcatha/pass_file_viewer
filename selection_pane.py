@@ -186,6 +186,9 @@ class SelectionPane(QWidget):
         """Store reference to the loaded pass data."""
         self._data = data
         self._current_indices = np.empty(0, dtype=np.intp)
+        # Sync model so any stale set_sorted(None, …) from a pre-set_data
+        # update_selection call can't leave the model with a None data pointer.
+        self._model.set_sorted(data, self._current_indices)
 
     def set_file_boundaries(self, names: list[str], counts: list[int]) -> None:
         """Update per-file name/count info so Shot # and File columns are correct."""
@@ -197,6 +200,9 @@ class SelectionPane(QWidget):
         All callers pass already-sorted indices (file-selected indices are sorted
         aranges; box-selected indices come from np.nonzero which is always sorted).
         """
+        if self._data is None:
+            return  # data not loaded yet; update_selection after set_data will follow
+
         arr = np.asarray(indices, dtype=np.intp)  # O(1) view when dtype already matches
 
         # Skip re-render if selection hasn't changed
