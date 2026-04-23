@@ -38,12 +38,10 @@ class _ShotTableModel(QAbstractTableModel):
         self._file_names: list[str] = [""]
 
     def set_sorted(self, data: PassData | None, indices: np.ndarray) -> None:
-        print(f"[DBG set_sorted] data={'set' if data is not None else 'NONE'} n={len(indices)}")
         self.beginResetModel()
         self._data = data
         self._indices = indices
         self.endResetModel()
-        print(f"[DBG set_sorted done] rowCount={len(self._indices)} _data={'set' if self._data is not None else 'NONE'}")
 
     def set_file_boundaries(self, names: list[str], counts: list[int]) -> None:
         """Set per-file name and shot count so Shot # and File columns work correctly."""
@@ -106,8 +104,6 @@ class _ShotTableModel(QAbstractTableModel):
 
     def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or self._data is None:
-            if role == Qt.ItemDataRole.DisplayRole and index.isValid():
-                print(f"[DBG data] row={index.row()} col={index.column()} _data=NONE rowCount={len(self._indices)}")
             return None
         row, col = index.row(), index.column()
         idx = int(self._indices[row])
@@ -176,6 +172,7 @@ class SelectionPane(QWidget):
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
         )
         self._table.setAlternatingRowColors(True)
+        self._table.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerItem)
         self._table.setStyleSheet(
             "QTableView { font-family: Consolas, monospace; font-size: 12px; }"
             "QTableView::item { padding: 2px 6px; }"
@@ -226,7 +223,6 @@ class SelectionPane(QWidget):
 
         self._current_indices = arr
         self._header_label.setText(f"Selection  ({total:,} shots)")
-        print(f"[DBG update_selection] total={total} _data={'set' if self._data is not None else 'NONE'}")
         self._model.set_sorted(self._data, arr)
         QTimer.singleShot(0, self._emit_content_width)
 
