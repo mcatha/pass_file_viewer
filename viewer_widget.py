@@ -2248,7 +2248,6 @@ class ShotViewerWidget(QWidget):
         if screen_pos is not None:
             self._tooltip.move(int(screen_pos[0]) + 20, int(screen_pos[1]) - self._tooltip.height() - 10)
         self._tooltip.setVisible(True)
-        self.box_selected.emit(self._box_selected_indices if self._locked_indices is not None else [idx])
         self._canvas.update()
 
     def set_locked_indices(self, indices: np.ndarray | None) -> None:
