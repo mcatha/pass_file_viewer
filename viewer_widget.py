@@ -471,6 +471,23 @@ class ShotViewerWidget(QWidget):
         self._sel_lines = visuals.Line(parent=self._visual_root, color=_SEL_LINE_COLOR, width=3)
         self._sel_lines.visible = False
 
+        # Shot-1 lens-flare markers: halo (large, faint) + core (small, bright)
+        # Only visible when connecting lines are on.  Fixed pixel size so they
+        # don't shrink away on zoom-out.
+        self._shot1_halo = visuals.Markers(parent=self._visual_root, antialias=4,
+                                           scaling='fixed', symbol='disc',
+                                           method='instanced')
+        self._shot1_halo.set_gl_state(blend=True, depth_test=False,
+                                      blend_func=('src_alpha', 'one'))
+        self._shot1_halo.visible = False
+
+        self._shot1_core = visuals.Markers(parent=self._visual_root, antialias=2,
+                                           scaling='fixed', symbol='disc',
+                                           method='instanced')
+        self._shot1_core.set_gl_state(blend=True, depth_test=False,
+                                      blend_func=('src_alpha', 'one'))
+        self._shot1_core.visible = False
+
         # Ruler line (data-space, white)
         self._ruler_line = visuals.Line(parent=self._visual_root, color=(1, 1, 1, 0.9), width=2)
         self._ruler_line.visible = False
@@ -747,6 +764,8 @@ class ShotViewerWidget(QWidget):
         self._sel_marker.visible = False
         self._sel_lines.visible = False
         self._box_sel_markers.visible = False
+        self._shot1_halo.visible = False
+        self._shot1_core.visible = False
 
         if data.count == 0:
             self._markers.set_data(np.empty((0, 2)))
@@ -989,6 +1008,7 @@ class ShotViewerWidget(QWidget):
             self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
             self._lines_data_set = True
             self._canvas.update()
+        self._update_shot1_markers()
 
     def _lines_with_breaks(self) -> np.ndarray:
         """Return positions array with NaN rows inserted at file boundaries to break the polyline."""
@@ -1006,6 +1026,33 @@ class ShotViewerWidget(QWidget):
         parts.append(pos[prev:])
         return np.concatenate(parts)
 
+    def _update_shot1_markers(self) -> None:
+        """Upload halo + core markers at shot 1 of each file, or hide if lines are off."""
+        if self._positions is None or not self._lines.visible or not self._file_break_offsets:
+            self._shot1_halo.visible = False
+            self._shot1_core.visible = False
+            return
+
+        shot1_pos = self._positions[np.array(self._file_break_offsets, dtype=np.intp)]
+
+        # Halo: large soft disc, warm-white glow (additive blend makes it bloom)
+        self._shot1_halo.set_data(
+            shot1_pos,
+            size=28,
+            face_color=(1.0, 1.0, 0.85, 0.20),
+            edge_width=0,
+        )
+        self._shot1_halo.visible = True
+
+        # Core: small bright disc
+        self._shot1_core.set_data(
+            shot1_pos,
+            size=8,
+            face_color=(1.0, 1.0, 0.75, 0.90),
+            edge_width=0,
+        )
+        self._shot1_core.visible = True
+
     def set_lines_visible(self, visible: bool) -> None:
         """Toggle shot connection lines."""
         if visible and self._positions is not None:
@@ -1014,6 +1061,7 @@ class ShotViewerWidget(QWidget):
                 self._lines_data_set = True
         self._lines.visible = visible
         self._update_sel_lines()
+        self._update_shot1_markers()
         self._canvas.update()
 
     @property
