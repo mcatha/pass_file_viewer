@@ -1074,15 +1074,10 @@ class ShotViewerWidget(QWidget):
         self._data_width  = self._data_xmax - self._data_xmin
         self._data_height = self._data_ymax - self._data_ymin
 
-        # Merged PassData — needed for tooltip index lookups
-        old = self._data
-        self._data = PassData(
-            header=new_data.header,
-            x=np.concatenate([old.x, new_data.x]),
-            y=np.concatenate([old.y, new_data.y]),
-            dwell=np.concatenate([old.dwell, new_data.dwell]),
-            count=old.count + n_new,
-        )
+        # Tooltip coordinate lookups use self._positions + self._origin and
+        # self._raw_dwells directly, so no need to maintain merged x/y/dwell
+        # arrays.  Only the count needs updating for bounds checks.
+        self._data.count += n_new
 
         _t1 = _time.perf_counter()
 
@@ -1804,7 +1799,10 @@ class ShotViewerWidget(QWidget):
             # when ready; fall back to argpartition while background sort runs.
             if self._priority_sorted is not None:
                 return self._priority_sorted[:count]
-            return np.argpartition(self._shot_priority, count)[:count]
+            # Sort not ready — uniform stride is O(count) vs O(N) for argpartition.
+            # Next camera event will upgrade to priority order once sort completes.
+            step = max(1, n_vis // count)
+            return np.arange(0, n_vis, step, dtype=np.intp)[:count]
         priorities = self._shot_priority[vis_idx]
         top_k = np.argpartition(priorities, count)[:count]
         return vis_idx[top_k]
@@ -2544,9 +2542,9 @@ class ShotViewerWidget(QWidget):
         self._sel_marker.visible = True
         self._update_sel_lines()
         shot_num = idx + 1
-        sx = self._data.x[idx]
-        sy = self._data.y[idx]
-        sd = self._data.dwell[idx]
+        sx = float(self._positions[idx, 0]) + self._origin[0]
+        sy = float(self._positions[idx, 1]) + self._origin[1]
+        sd = float(self._raw_dwells[idx])
         tip = (
             f"Shot #{shot_num:,}\n"
             f"X: {sx:,.0f} nm   Y: {sy:,.0f} nm\n"
@@ -2597,9 +2595,9 @@ class ShotViewerWidget(QWidget):
                 self._hover_tooltip.setVisible(False)
             else:
                 shot_num = idx + 1
-                sx = self._data.x[idx]
-                sy = self._data.y[idx]
-                sd = self._data.dwell[idx]
+                sx = float(self._positions[idx, 0]) + self._origin[0]
+                sy = float(self._positions[idx, 1]) + self._origin[1]
+                sd = float(self._raw_dwells[idx])
                 tip = (
                     f"Shot #{shot_num:,}\n"
                     f"X: {sx:,.0f} nm   Y: {sy:,.0f} nm\n"
@@ -2825,9 +2823,9 @@ class ShotViewerWidget(QWidget):
                 self._update_sel_lines()
                 # Show persistent tooltip
                 shot_num = idx + 1
-                sx = self._data.x[idx]
-                sy = self._data.y[idx]
-                sd = self._data.dwell[idx]
+                sx = float(self._positions[idx, 0]) + self._origin[0]
+                sy = float(self._positions[idx, 1]) + self._origin[1]
+                sd = float(self._raw_dwells[idx])
                 tip = (
                     f"Shot #{shot_num:,}\n"
                     f"X: {sx:,.0f} nm   Y: {sy:,.0f} nm\n"
