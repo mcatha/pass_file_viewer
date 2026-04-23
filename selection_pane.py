@@ -38,10 +38,12 @@ class _ShotTableModel(QAbstractTableModel):
         self._file_names: list[str] = [""]
 
     def set_sorted(self, data: PassData | None, indices: np.ndarray) -> None:
+        print(f"[DBG set_sorted] data={'set' if data is not None else 'NONE'} n={len(indices)}")
         self.beginResetModel()
         self._data = data
         self._indices = indices
         self.endResetModel()
+        print(f"[DBG set_sorted done] rowCount={len(self._indices)} _data={'set' if self._data is not None else 'NONE'}")
 
     def set_file_boundaries(self, names: list[str], counts: list[int]) -> None:
         """Set per-file name and shot count so Shot # and File columns work correctly."""
@@ -86,15 +88,10 @@ class _ShotTableModel(QAbstractTableModel):
         self._indices = idx[order_arr]
         self.endResetModel()
 
-    # Qt QScrollBar uses a 32-bit int for its range.  At ~30 px/row the
-    # table content height overflows INT_MAX around 70 M rows, causing the
-    # view to go blank.  Cap the visible row count well below that limit.
-    _ROW_CAP = 2_000_000
-
     # ── QAbstractTableModel interface ──
 
     def rowCount(self, parent=QModelIndex()):
-        return min(len(self._indices), self._ROW_CAP)
+        return len(self._indices)
 
     def columnCount(self, parent=QModelIndex()):
         return len(self._COLUMNS)
@@ -109,6 +106,8 @@ class _ShotTableModel(QAbstractTableModel):
 
     def data(self, index: QModelIndex, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid() or self._data is None:
+            if role == Qt.ItemDataRole.DisplayRole and index.isValid():
+                print(f"[DBG data] row={index.row()} col={index.column()} _data=NONE rowCount={len(self._indices)}")
             return None
         row, col = index.row(), index.column()
         idx = int(self._indices[row])
@@ -226,13 +225,8 @@ class SelectionPane(QWidget):
             return
 
         self._current_indices = arr
-        cap = _ShotTableModel._ROW_CAP
-        if total > cap:
-            self._header_label.setText(
-                f"Selection  ({total:,} shots, showing first {cap:,})"
-            )
-        else:
-            self._header_label.setText(f"Selection  ({total:,} shots)")
+        self._header_label.setText(f"Selection  ({total:,} shots)")
+        print(f"[DBG update_selection] total={total} _data={'set' if self._data is not None else 'NONE'}")
         self._model.set_sorted(self._data, arr)
         QTimer.singleShot(0, self._emit_content_width)
 
