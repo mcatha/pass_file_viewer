@@ -1309,10 +1309,11 @@ class ShotViewerWidget(QWidget):
 
     def _build_kdtree_async(self, positions: np.ndarray, rendered_indices: np.ndarray | None) -> None:
         """Build the KD-tree on a worker thread."""
-        # Clean up any previous thread
         if self._kdtree_thread is not None:
+            self._kdtree_worker.finished.disconnect(self._on_kdtree_ready)
+            self._kdtree_thread.finished.disconnect(self._on_kdtree_thread_done)
             self._kdtree_thread.quit()
-            self._kdtree_thread.wait()
+            self._cancelling_threads.append(self._kdtree_thread)
         self._kdtree = None
         self._kdtree_indices = None
         thread = QThread(self)
