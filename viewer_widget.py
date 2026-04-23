@@ -1269,7 +1269,7 @@ class ShotViewerWidget(QWidget):
             ov.center = None
             ov.update()
             return
-        sc = self._data_to_canvas(np.array([-self._origin[0], -self._origin[1]]))
+        sc = self._data_to_canvas(np.array([0.0, 0.0]))
         if sc is None:
             ov.center = None
             ov.update()
