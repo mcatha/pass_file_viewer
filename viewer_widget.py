@@ -65,6 +65,15 @@ _SHOT1_LABEL_STYLE = (
 
 _ARROW_COLOR = QColor(200, 200, 200, 220)
 _LABEL_COLOR = QColor(255, 255, 255, 255)    # pure white
+
+
+def _fmt_mm(nm: float) -> str:
+    """Format a value in nm as mm with 6 decimal places in two groups of 3.
+    e.g. 65_123_456 → '65.123 456'
+    """
+    s = f"{nm / 1_000_000:.6f}"
+    dot = s.index('.')
+    return s[:dot + 4] + ' ' + s[dot + 4:]
 _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
 _AXIS_LABEL_FONT = QFont("Consolas", 17, QFont.Weight.Bold)
 _FIDUCIAL_PEN_COLOR  = QColor(255, 255, 140, 217)   # light yellow
@@ -690,7 +699,7 @@ class ShotViewerWidget(QWidget):
             "font-family: Consolas, monospace;"
             "font-size: 11px;"
         )
-        self._coord_label.setText("X: — nm   Y: — nm")
+        self._coord_label.setText("X: —.— mm   Y: —.— mm")
         self._coord_label.adjustSize()
         self._coord_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._coord_label.show()
@@ -1226,6 +1235,7 @@ class ShotViewerWidget(QWidget):
             if sc is None:
                 continue
             cx, cy = float(sc[0]), float(sc[1])
+            print(f"[fid] {name}: data=({x_nm - self._origin[0]:.0f}, {y_nm - self._origin[1]:.0f}) screen=({cx:.1f}, {cy:.1f})")
             if -margin <= cx <= cw + margin and -margin <= cy <= ch + margin:
                 markers.append((cx, cy, arm_px, circle_px, name))
 
@@ -2305,7 +2315,7 @@ class ShotViewerWidget(QWidget):
             pos3 = tr.map(list(event.pos) + [0, 1])
             data_x, data_y = pos3[0], pos3[1]
             self._coord_label.setText(
-                f"X: {data_x + self._origin[0]:,.1f} nm   Y: {data_y + self._origin[1]:,.1f} nm"
+                f"X: {_fmt_mm(data_x + self._origin[0])} mm   Y: {_fmt_mm(data_y + self._origin[1])} mm"
             )
             self._coord_label.adjustSize()
             self._reposition_coord_label()
