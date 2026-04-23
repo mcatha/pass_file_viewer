@@ -775,6 +775,7 @@ class ShotViewerWidget(QWidget):
         self._argsort_worker: _ArgsortWorker | None = None
         self._box_sel_thread: QThread | None = None
         self._box_sel_worker: _BoxSelWorker | None = None
+        self._cancelling_threads: list[QThread] = []  # quit()-but-not-waited threads
         self._priority_sorted: np.ndarray | None = None
         self._rendered_indices: np.ndarray | None = None
         self._rotation_deg: float = 0.0
@@ -942,6 +943,7 @@ class ShotViewerWidget(QWidget):
             self._argsort_worker.finished.disconnect(self._on_argsort_ready)
             self._argsort_thread.finished.disconnect(self._on_argsort_thread_done)
             self._argsort_thread.quit()
+            self._cancelling_threads.append(self._argsort_thread)
             # No wait() — thread finishes on its own; signals already disconnected
             # so stale results won't be applied and new thread refs won't be nulled.
         argsort_thread = QThread(self)
@@ -1126,6 +1128,7 @@ class ShotViewerWidget(QWidget):
             self._argsort_worker.finished.disconnect(self._on_argsort_ready)
             self._argsort_thread.finished.disconnect(self._on_argsort_thread_done)
             self._argsort_thread.quit()
+            self._cancelling_threads.append(self._argsort_thread)
             # No wait() — thread finishes on its own; signals already disconnected
             # so stale results won't be applied and new thread refs won't be nulled.
         argsort_thread = QThread(self)
@@ -1361,6 +1364,9 @@ class ShotViewerWidget(QWidget):
                 t.quit()
                 t.wait()
                 setattr(self, attr, None)
+        for t in self._cancelling_threads:
+            t.wait()
+        self._cancelling_threads.clear()
 
     def set_file_break_offsets(self, offsets: list[int]) -> None:
         """Set cumulative shot offsets (one per file) so connecting lines break at file boundaries."""
@@ -2784,6 +2790,7 @@ class ShotViewerWidget(QWidget):
                 self._box_sel_worker.finished.disconnect(self._on_box_sel_ready)
                 self._box_sel_thread.finished.disconnect(self._on_box_sel_thread_done)
                 self._box_sel_thread.quit()
+                self._cancelling_threads.append(self._box_sel_thread)
                 # No wait() — stale signals are disconnected; new refs set below
             thread = QThread(self)
             worker = _BoxSelWorker(self._positions, quad)
