@@ -70,9 +70,10 @@ _ARROW_COLOR = QColor(200, 200, 200, 220)
 _LABEL_COLOR = QColor(255, 255, 255, 255)    # pure white
 _ARROW_SIZE = 20       # side‑length of arrowhead triangle in px
 _AXIS_LABEL_FONT = QFont("Consolas", 17, QFont.Weight.Bold)
-_FIDUCIAL_COLOR     = (1.0, 1.0, 0.55, 0.85)   # light yellow
-_FIDUCIAL_ARM_NM    = 5_000_000   # 5 mm half-length of each arm
-_FIDUCIAL_CIRCLE_NM = 3_500_000   # 3.5 mm circle radius (intersects arms)
+_FIDUCIAL_COLOR      = (1.0, 1.0, 0.55, 0.85)   # light yellow
+_FIDUCIAL_ARM_NM     = 5_000_000   # 5 mm half-length of each arm
+_FIDUCIAL_CIRCLE_NM  = 3_500_000   # 3.5 mm circle radius (intersects arms)
+_FIDUCIAL_LINE_WIDTH_NM = 400_000  # 0.4 mm stroke width (scales with zoom)
 _FIDUCIAL_CIRCLE_PTS = 64         # polygon approximation of each circle
 
 # Column-position fiducials — (label, x_nm, y_nm) in machine coordinates
@@ -634,6 +635,10 @@ class ShotViewerWidget(QWidget):
         )
         self._fid_labels.visible = False
         self._fiducial_array: str | None = None
+        # Cached geometry for width-on-zoom updates
+        self._fid_seg_pts:  np.ndarray | None = None
+        self._fid_circ_pts: np.ndarray | None = None
+        self._fid_circ_conn: np.ndarray | None = None
 
         # Coordinate readout label at bottom of canvas
         self._coord_label = QLabel(self._canvas.native)
@@ -1023,6 +1028,7 @@ class ShotViewerWidget(QWidget):
     def _reposition_fiducials(self) -> None:
         """Build fiducial geometry in world (data) space."""
         if self._fiducial_array is None or self._origin is None:
+            self._fid_seg_pts = None
             self._fid_lines.visible = False
             self._fid_circles.visible = False
             self._fid_labels.visible = False
@@ -1060,15 +1066,31 @@ class ShotViewerWidget(QWidget):
             label_pos[i]   = [wx + arm * 1.08, wy, 0.0]
             label_texts.append(name)
 
-        self._fid_lines.set_data(seg_pts)
-        self._fid_lines.visible = True
+        self._fid_seg_pts   = seg_pts
+        self._fid_circ_pts  = all_circ
+        self._fid_circ_conn = circ_conn
 
-        self._fid_circles.set_data(all_circ, connect=circ_conn)
+        self._update_fiducial_widths()
+        self._fid_lines.visible   = True
         self._fid_circles.visible = True
 
         self._fid_labels.text = label_texts
         self._fid_labels.pos  = label_pos
         self._fid_labels.visible = True
+
+    def _update_fiducial_widths(self) -> None:
+        """Recompute line pixel width from current zoom and re-upload to GPU."""
+        if self._fid_seg_pts is None:
+            return
+        try:
+            nm_per_px = self._camera.rect.width / max(self._canvas.native.width(), 1)
+        except Exception:
+            return
+        px_w = max(1.0, _FIDUCIAL_LINE_WIDTH_NM / nm_per_px)
+        self._fid_lines.set_data(self._fid_seg_pts, color=_FIDUCIAL_COLOR,
+                                 width=px_w, connect='segments')
+        self._fid_circles.set_data(self._fid_circ_pts, connect=self._fid_circ_conn,
+                                   color=_FIDUCIAL_COLOR, width=px_w)
 
     def _build_kdtree_async(self, positions: np.ndarray, rendered_indices: np.ndarray | None) -> None:
         """Build the KD-tree on a worker thread."""
@@ -1975,6 +1997,7 @@ class ShotViewerWidget(QWidget):
             self._position_stripe_tooltip()
         self._position_pinned_labels()
         self._reposition_shot1_labels()
+        self._update_fiducial_widths()
 
         # Throttled shot stride update on zoom
         if self._all_positions is not None:
