@@ -58,10 +58,15 @@ wafer = plt.Circle((0, 0), 150, fill=False, edgecolor='#888', linewidth=1.5,
                    linestyle='--', zorder=6, label='Wafer edge (300 mm)')
 ax.add_patch(wafer)
 
+# 200 mm wafer outline centred on C2 (37.5, 0)
+wafer200 = plt.Circle((37.5, 0), 100, fill=False, edgecolor='#e07000', linewidth=1.5,
+                      linestyle='--', zorder=6, label='Wafer edge (200 mm), centred on C2')
+ax.add_patch(wafer200)
+
 # Legend proxy for beam marker
 beam_marker = plt.Line2D([0], [0], marker='+', color='#c00', linestyle='none',
                          markersize=9, markeredgewidth=1.5, label='Beam initial position')
-ax.legend(handles=[wafer, beam_marker], loc='lower right', fontsize=10)
+ax.legend(handles=[wafer, wafer200, beam_marker], loc='lower right', fontsize=10)
 
 ax.set_xlim(-175, 175)
 ax.set_ylim(-175, 175)
