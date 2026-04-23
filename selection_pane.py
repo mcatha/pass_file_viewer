@@ -213,17 +213,31 @@ class SelectionPane(QWidget):
     def update_selection(self, indices: list[int]) -> None:
         """Populate the table with the given shot indices (0-based), sorted by shot number."""
         arr = np.asarray(indices, dtype=np.intp)
-        if (len(arr) == len(self._current_indices)
-                and np.array_equal(np.sort(arr), self._current_indices)):
-            return  # identical selection — skip the clear/re-sort flash
-        total = len(indices)
-        self._pending_count = total
-        self._header_label.setText(f"Selection  ({total:,} shots)  —  loading…")
-        self._model.clear()
+        total = len(arr)
+
+        # Cancel any in-flight sort first
         if self._sort_worker is not None:
             self._sort_worker.finished.disconnect(self._on_sort_ready)
             self._sort_thread.quit()
             self._sort_thread.wait()
+            self._sort_thread = None
+            self._sort_worker = None
+
+        _DISPLAY_LIMIT = 50_000
+        if total > _DISPLAY_LIMIT:
+            self._current_indices = np.empty(0, dtype=np.intp)
+            self._pending_count = total
+            self._header_label.setText(f"Selection  ({total:,} shots)  —  too many to list")
+            self._model.clear()
+            return
+
+        if (total == len(self._current_indices)
+                and np.array_equal(np.sort(arr), self._current_indices)):
+            return  # identical selection — skip the clear/re-sort flash
+
+        self._pending_count = total
+        self._header_label.setText(f"Selection  ({total:,} shots)  —  loading…")
+        self._model.clear()
         thread = QThread(self)
         worker = _SortWorker(indices)
         worker.moveToThread(thread)
