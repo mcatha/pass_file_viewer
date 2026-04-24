@@ -177,7 +177,7 @@ def parse_pass_header_only(path: str | Path) -> PassHeader:
     return PassHeader()
 
 
-def _read_records(raw, offset: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+def _read_records(raw, offset: int = 0, shot_stride: int = 1) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Extract shot arrays from raw 8-byte records starting at *offset*.
 
     Returns (x, y, dwell, n_shots) arrays.
@@ -191,6 +191,8 @@ def _read_records(raw, offset: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndar
     raw64 = np.frombuffer(
         raw, dtype=np.dtype("<u8"), count=n_records, offset=offset,
     )
+    if shot_stride > 1:
+        raw64 = raw64[::shot_stride]
 
     # Bitfield extraction via 64-bit arithmetic:
     #   bits  0- 1: mID      (2 bits)
@@ -215,7 +217,7 @@ def _read_records(raw, offset: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndar
     return x, y, dwell, n_shots
 
 
-def parse_pass_file(path: str | Path) -> PassData:
+def parse_pass_file(path: str | Path, shot_stride: int = 1) -> PassData:
     """Parse a .pass binary file.
 
     Metadata is read from a companion .pass.meta file if present.
@@ -271,7 +273,7 @@ def parse_pass_file(path: str | Path) -> PassData:
         mm = None
 
     try:
-        x, y, dwell, n_shots = _read_records(raw, record_offset)
+        x, y, dwell, n_shots = _read_records(raw, record_offset, shot_stride)
         return PassData(header=header, x=x, y=y, dwell=dwell, count=n_shots)
     finally:
         if mm is not None:

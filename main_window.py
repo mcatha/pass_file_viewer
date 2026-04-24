@@ -64,16 +64,18 @@ class _MultiParseWorker(QObject):
     progress = pyqtSignal(int, int)  # (completed, total)
     finished = pyqtSignal(object, object)  # (list[(PassData, Path)], None) or (None, error_str)
 
-    def __init__(self, paths: list[Path]) -> None:
+    def __init__(self, paths: list[Path], stride: int = 1) -> None:
         super().__init__()
         self._paths = paths
+        self.stride = stride
 
     def run(self) -> None:
         from concurrent.futures import ThreadPoolExecutor, as_completed
         n = len(self._paths)
         results: dict[Path, PassData] = {}
         with ThreadPoolExecutor() as pool:
-            futures = {pool.submit(parse_pass_file, p): p for p in self._paths}
+            futures = {pool.submit(parse_pass_file, p, self.stride): p
+                       for p in self._paths}
             for future in as_completed(futures):
                 path = futures[future]
                 try:
@@ -123,51 +125,50 @@ class FileIndex:
 
 
 class FileCache:
-    """LRU cache of parsed PassData objects, bounded by total shot count."""
+    """LRU cache of parsed PassData objects, bounded by total shot count.
+
+    Cache key is (Path, stride) so entries at different strides coexist.
+    When the viewport zooms in, old high-stride entries are evicted and
+    replaced with fresh low-stride (higher-resolution) loads.
+    """
 
     def __init__(self, max_shots: int) -> None:
         self._max_shots = max_shots
-        self._data: OrderedDict[Path, PassData] = OrderedDict()
+        self._data: OrderedDict[tuple[Path, int], PassData] = OrderedDict()
         self._total_shots = 0
 
     @property
     def total_shots(self) -> int:
         return self._total_shots
 
-    def get(self, path: Path) -> PassData | None:
-        if path in self._data:
-            self._data.move_to_end(path)
-            return self._data[path]
+    def get(self, path: Path, stride: int = 1) -> PassData | None:
+        key = (path, stride)
+        if key in self._data:
+            self._data.move_to_end(key)
+            return self._data[key]
         return None
 
-    def put(self, path: Path, data: PassData) -> None:
-        if path in self._data:
-            self._total_shots -= self._data[path].count
-        self._data[path] = data
-        self._data.move_to_end(path)
+    def put(self, path: Path, stride: int, data: PassData) -> None:
+        key = (path, stride)
+        if key in self._data:
+            self._total_shots -= self._data[key].count
+        self._data[key] = data
+        self._data.move_to_end(key)
         self._total_shots += data.count
-        # Evict oldest entries if over budget (but never evict the entry we
-        # just added or we'd loop forever on a file larger than the budget).
         while self._total_shots > self._max_shots and len(self._data) > 1:
-            oldest_path = next(iter(self._data))
-            if oldest_path == path:
+            oldest_key = next(iter(self._data))
+            if oldest_key == key:
                 break
-            self.evict(oldest_path)
+            self.evict(*oldest_key)
 
-    def evict(self, path: Path) -> None:
-        if path in self._data:
-            self._total_shots -= self._data[path].count
-            del self._data[path]
+    def evict(self, path: Path, stride: int = 1) -> None:
+        key = (path, stride)
+        if key in self._data:
+            self._total_shots -= self._data[key].count
+            del self._data[key]
 
-    def paths(self) -> set[Path]:
+    def keys(self) -> set[tuple[Path, int]]:
         return set(self._data.keys())
-
-
-def _spatial_sample(candidates: list[FileEntry], n: int) -> list[FileEntry]:
-    """Return n spatially-distributed entries from candidates."""
-    ordered = sorted(candidates, key=lambda e: (e.origin_x, e.origin_y))
-    step = max(1, len(ordered) // n)
-    return ordered[::step][:n]
 
 
 class _HeaderScanWorker(QObject):
@@ -1248,53 +1249,54 @@ class MainWindow(QMainWindow):
         if not candidates:
             return
 
-        # Budget: how many files can we keep loaded at once?
-        total_index_shots = sum(e.shot_count for e in self._file_index.entries)
-        n_idx = len(self._file_index.entries)
-        avg_shots = total_index_shots / n_idx if n_idx else 1
-        budget_files = max(1, int(_RAM_BUDGET_SHOTS // avg_shots))
+        # Compute adaptive stride so ALL candidate files are loaded but total
+        # shots stay within the RAM budget.  At full wafer zoom this may mean
+        # reading only every Nth record per file; at close zoom stride → 1.
+        total_candidate_shots = sum(e.shot_count for e in candidates)
+        stride = max(1, math.ceil(total_candidate_shots / _RAM_BUDGET_SHOTS))
 
-        if len(candidates) > budget_files:
-            candidates = _spatial_sample(candidates, budget_files)
-
-        desired = {e.path for e in candidates}
-        cached = self._file_cache.paths()
+        desired = {(e.path, stride) for e in candidates}
+        cached  = self._file_cache.keys()
 
         to_evict = cached - desired
         to_load  = desired - cached
 
-        for path in to_evict:
-            self._file_cache.evict(path)
+        for path, s in to_evict:
+            self._file_cache.evict(path, s)
 
         if not to_load:
             if to_evict:
                 self._rebuild_viewer_data()
             return
 
-        paths_to_load = [e.path for e in candidates if e.path in to_load]
-        self._load_files_for_cache(paths_to_load)
+        paths_to_load = [e.path for e in candidates
+                         if (e.path, stride) in to_load]
+        self._load_files_for_cache(paths_to_load, stride)
 
-    def _load_files_for_cache(self, paths: list[Path]) -> None:
+    def _load_files_for_cache(self, paths: list[Path], stride: int = 1) -> None:
         """Parse shot data for the given files on a background thread."""
         if self._parse_thread is not None:
             self._parse_thread.quit()
             self._parse_thread.wait()
 
         n = len(paths)
-        self._status_label.setText(f"  Loading {n} files…")
+        stride_note = f" (stride {stride})" if stride > 1 else ""
+        self._status_label.setText(f"  Loading {n} files{stride_note}…")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         QApplication.processEvents()
 
         thread = QThread(self)
-        worker = _MultiParseWorker(paths)
+        worker = _MultiParseWorker(paths, stride)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.progress.connect(
             lambda cur, tot: self._status_label.setText(
-                f"  Loading file {cur}/{tot}…"
+                f"  Loading file {cur}/{tot}{stride_note}…"
             )
         )
-        worker.finished.connect(self._on_cache_load_finished)
+        worker.finished.connect(
+            lambda results, error, s=stride: self._on_cache_load_finished(results, error, s)
+        )
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
         thread.finished.connect(self._on_parse_thread_done)
@@ -1302,7 +1304,7 @@ class MainWindow(QMainWindow):
         self._parse_worker = worker
         thread.start()
 
-    def _on_cache_load_finished(self, results, error) -> None:
+    def _on_cache_load_finished(self, results, error, stride: int = 1) -> None:
         QApplication.restoreOverrideCursor()
         if results is None:
             self._status_label.setText(f"  Error: {error}")
@@ -1313,7 +1315,7 @@ class MainWindow(QMainWindow):
             oy = np.float64(data.header.stripeOriginY)
             data.x = data.x.astype(np.float64) + ox
             data.y = data.y.astype(np.float64) + oy
-            self._file_cache.put(path, data)
+            self._file_cache.put(path, stride, data)
 
         self._rebuild_viewer_data()
 
@@ -1321,8 +1323,8 @@ class MainWindow(QMainWindow):
         """Rebuild the merged PassData from cache and push to the viewer."""
         if self._file_cache is None:
             return
-        cached_paths = sorted(self._file_cache.paths())
-        pairs = [(self._file_cache.get(p), p) for p in cached_paths]
+        cached_keys = sorted(self._file_cache.keys())
+        pairs = [(self._file_cache.get(p, s), p) for p, s in cached_keys]
         pairs = [(d, p) for d, p in pairs if d is not None]
         if not pairs:
             return
