@@ -1424,8 +1424,16 @@ class ShotViewerWidget(QWidget):
             self._kdtree_worker = None
 
     def _on_argsort_ready(self, result: np.ndarray) -> None:
-        """Called when background argsort completes."""
+        """Called when background argsort completes.
+
+        Immediately re-render so the display upgrades from the fallback
+        uniform-stride indices to the correct priority-sorted selection.
+        Without this the initial render looks different from any subsequent
+        camera-triggered re-render.
+        """
         self._priority_sorted = result
+        self._last_view_key = None
+        self._update_decim_stride()
 
     def _on_argsort_thread_done(self) -> None:
         if self.sender() is self._argsort_thread:
