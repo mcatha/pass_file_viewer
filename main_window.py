@@ -197,8 +197,7 @@ class _HeaderScanWorker(QObject):
         entries: list[FileEntry] = []
         for p in self._paths:
             h = results[p]
-            shot_count = (h.shotCount if h.shotCount > 0
-                          else max(0, (p.stat().st_size - 78) // 8))
+            shot_count = max(0, (p.stat().st_size - 78) // 8)
             entries.append(FileEntry(
                 path=p,
                 origin_x=h.stripeOriginX,
