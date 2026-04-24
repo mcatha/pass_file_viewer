@@ -116,19 +116,30 @@ H_PX, W_PX = _VAL_MASK.shape
 
 def _bilinear_hit(IY_f: np.ndarray, valid_y: np.ndarray,
                   IX_f: np.ndarray) -> np.ndarray:
-    """Return bool (N_Y × N_X) hit matrix via bilinear sampling of _VAL_MASK."""
+    """Return bool (N_Y × N_X) hit matrix via bilinear sampling of _VAL_MASK.
+
+    Exploits the fact that all X shots in one pass typically span only 1–3
+    image pixel columns: compute Y-interpolated coverage once per unique
+    column, then combine with per-shot X weights.  Avoids creating 4 large
+    (N_Y × N_X) float arrays that the naive implementation requires.
+    """
     iy0 = np.clip(np.floor(IY_f).astype(np.int32), 0, H_PX - 2)
-    ix0 = np.clip(np.floor(IX_f).astype(np.int32), 0, W_PX - 2)
     iy1 = iy0 + 1
-    ix1 = ix0 + 1
-    wy1 = np.clip(IY_f - iy0, 0.0, 1.0).astype(np.float32)[:, None]
+    wy1 = np.clip(IY_f - iy0, 0.0, 1.0).astype(np.float32)
     wy0 = 1.0 - wy1
-    wx1 = np.clip(IX_f - ix0, 0.0, 1.0).astype(np.float32)[None, :]
+
+    ix0 = np.clip(np.floor(IX_f).astype(np.int32), 0, W_PX - 2)
+    ix1 = ix0 + 1
+    wx1 = np.clip(IX_f - ix0, 0.0, 1.0).astype(np.float32)
     wx0 = 1.0 - wx1
-    sampled = (wy0 * (wx0 * _VAL_MASK[iy0[:, None], ix0[None, :]]
-                    + wx1 * _VAL_MASK[iy0[:, None], ix1[None, :]])
-             + wy1 * (wx0 * _VAL_MASK[iy1[:, None], ix0[None, :]]
-                    + wx1 * _VAL_MASK[iy1[:, None], ix1[None, :]]))
+
+    # One Y-interpolated column per unique pixel column needed (usually 1–3).
+    unique_c, inv = np.unique(np.concatenate([ix0, ix1]), return_inverse=True)
+    col_vals = np.column_stack([wy0 * _VAL_MASK[iy0, c] + wy1 * _VAL_MASK[iy1, c]
+                                for c in unique_c])          # (N_Y, n_unique)
+    n = len(ix0)
+    sampled = (wx0[None, :] * col_vals[:, inv[:n]]
+             + wx1[None, :] * col_vals[:, inv[n:]])
     hit = sampled < 0.5
     hit[~valid_y, :] = False
     return hit
@@ -194,6 +205,11 @@ for n in range(1, N_MASTER + 1):
             continue
 
         x_abs = x_start + x_local
+
+        # Skip passes whose X range doesn't overlap the logo at all.
+        if x_abs[-1] < LOGO_X_MIN or x_abs[0] > LOGO_X_MAX:
+            continue
+
         Y_LOC_A, IY_A, valid_A, Y_LOC_B, IY_B, valid_B = _y_grids[(ys_start, ys_end)]
 
         # Even-indexed X columns → grid A; odd → grid B (offset PITCH_Y/2 in Y).
