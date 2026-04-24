@@ -815,7 +815,7 @@ class ShotViewerWidget(QWidget):
         # Mouse-move throttle: avoid KD-tree queries faster than display refresh
         self._hover_timer = QTimer(self)
         self._hover_timer.setSingleShot(True)
-        self._hover_timer.setInterval(16)  # ~60 fps cap
+        self._hover_timer.setInterval(100)  # query fires 100 ms after mouse stops
         self._hover_timer.timeout.connect(self._do_hover_query)
         self._pending_hover_pos: tuple[float, float] | None = None
         self._pending_hover_px: tuple[int, int] = (0, 0)
@@ -2369,11 +2369,10 @@ class ShotViewerWidget(QWidget):
         if self._kdtree is None and self._data is None:
             return
 
-        # Throttle hover queries to ~60 fps
+        # Debounce: restart timer on every move so query fires only after mouse pauses
         self._pending_hover_pos = (data_x, data_y)
         self._pending_hover_px = (int(event.pos[0]), int(event.pos[1]))
-        if not self._hover_timer.isActive():
-            self._hover_timer.start()
+        self._hover_timer.start()
 
     def _hit_test(self, scene_pos: np.ndarray, min_radius_data: float) -> int | None:
         """Return the index of the shot under *scene_pos*, or None.
