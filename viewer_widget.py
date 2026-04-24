@@ -1492,12 +1492,11 @@ class ShotViewerWidget(QWidget):
 
         shot1_pos = self._positions[np.array(self._file_break_offsets, dtype=np.intp)]
 
-        # Pixel sizes: full at dpp ≤ 300 nm/px, shrink as sqrt beyond that,
-        # floor at minimum so they never disappear.
+        # Pixel sizes: full at dpp ≤ 300 nm/px, shrink beyond that.
         _DPP_REF = 300.0
-        scale = min(1.0, (_DPP_REF / max(dpp, _DPP_REF)) ** 0.5) if dpp else 1.0
-        halo_px = max(10, round(52 * scale))
-        core_px = max(4,  round(18 * scale))
+        scale = min(1.0, (_DPP_REF / max(dpp, _DPP_REF)) ** 0.75) if dpp else 1.0
+        halo_px = max(2, round(52 * scale))
+        core_px = max(1, round(18 * scale))
 
         # Halo: large soft disc
         self._shot1_halo.set_data(
