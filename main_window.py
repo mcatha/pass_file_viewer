@@ -251,6 +251,8 @@ class MainWindow(QMainWindow):
         self._file_index: FileIndex | None = None
         self._file_cache: FileCache | None = None
         self._lazy_first_load: bool = True
+        self._viewport_true_shots: int = 0   # unstrided shot count for current viewport
+        self._current_stride: int = 1
         self._pending_viewport: tuple[float, float, float, float] | None = None
         self._viewport_debounce_timer = QTimer(self)
         self._viewport_debounce_timer.setSingleShot(True)
@@ -1254,6 +1256,8 @@ class MainWindow(QMainWindow):
         # reading only every Nth record per file; at close zoom stride → 1.
         total_candidate_shots = sum(e.shot_count for e in candidates)
         stride = max(1, math.ceil(total_candidate_shots / _RAM_BUDGET_SHOTS))
+        self._viewport_true_shots = total_candidate_shots
+        self._current_stride = stride
 
         desired = {(e.path, stride) for e in candidates}
         cached  = self._file_cache.keys()
@@ -1382,8 +1386,13 @@ class MainWindow(QMainWindow):
         n_total = len(self._file_index.entries) if self._file_index else n_loaded
         total_size_mb = sum(p.stat().st_size for _, p in pairs) / (1024 * 1024)
         self.setWindowTitle(f"Pass File Viewer — {n_loaded}/{n_total} files")
+        if self._current_stride > 1:
+            shots_str = (f"Shots: {self._viewport_true_shots:,}"
+                         f" (1 in {self._current_stride} rendered)")
+        else:
+            shots_str = f"Shots: {self._viewport_true_shots:,}"
         base = (f"  {n_loaded}/{n_total} files  |  "
-                f"Shots: {merged.count:,}  |  "
+                f"{shots_str}  |  "
                 f"Loaded: {total_size_mb:.0f} MB")
         if self._viewer._kdtree is None:
             base += "  |  Building spatial index…"
