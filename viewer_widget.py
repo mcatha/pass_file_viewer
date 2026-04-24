@@ -696,13 +696,13 @@ class ShotViewerWidget(QWidget):
         # Only visible when connecting lines are on.  Fixed screen-pixel scaling;
         # sizes are recomputed on each zoom change with sqrt falloff.
         self._shot1_halo = visuals.Markers(parent=self._visual_root, antialias=4,
-                                           scaling='scene', symbol='disc',
+                                           scaling='fixed', symbol='disc',
                                            method='instanced')
         self._shot1_halo.set_gl_state('translucent', depth_test=False)
         self._shot1_halo.visible = False
 
         self._shot1_core = visuals.Markers(parent=self._visual_root, antialias=2,
-                                           scaling='scene', symbol='disc',
+                                           scaling='fixed', symbol='disc',
                                            method='instanced')
         self._shot1_core.set_gl_state('translucent', depth_test=False)
         self._shot1_core.visible = False
@@ -1498,15 +1498,22 @@ class ShotViewerWidget(QWidget):
 
         shot1_pos = self._positions[np.array(self._file_break_offsets, dtype=np.intp)]
 
-        # Sizes in data units (nm) so markers scale naturally with zoom.
-        max_sz = getattr(self, '_max_shot_size', 100.0)
-        halo_size = max_sz * 5.0
-        core_size = max_sz * 2.0
+        # Always derive dpp from camera so callers don't need to pass it.
+        if dpp is None or dpp <= 0:
+            r = self._camera.rect
+            canvas_px = max(self._canvas.native.width(), 1)
+            dpp = float(r.width) / canvas_px if r.width > 0 else 1.0
+
+        # Pixel sizes: full at dpp ≤ 300 nm/px, shrink beyond that.
+        _DPP_REF = 300.0
+        scale = min(1.0, (_DPP_REF / max(dpp, _DPP_REF)) ** 0.75)
+        halo_px = max(2, round(32 * scale))
+        core_px = max(1, round(10 * scale))
 
         # Halo: large soft disc
         self._shot1_halo.set_data(
             shot1_pos,
-            size=halo_size,
+            size=halo_px,
             face_color=(1.0, 1.0, 0.85, 0.55),
             edge_width=0,
         )
@@ -1515,7 +1522,7 @@ class ShotViewerWidget(QWidget):
         # Core: small bright disc
         self._shot1_core.set_data(
             shot1_pos,
-            size=core_size,
+            size=core_px,
             face_color=(1.0, 1.0, 0.75, 0.90),
             edge_width=0,
         )
