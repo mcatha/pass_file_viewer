@@ -907,6 +907,8 @@ class MainWindow(QMainWindow):
             return
 
         self._next_load_incremental = False
+        self._file_index = None
+        self._file_cache = None
 
         # Large file set: use viewport-aware lazy loading
         if len(valid) > 1:
@@ -915,8 +917,6 @@ class MainWindow(QMainWindow):
             except OSError:
                 total_bytes = 0
             if total_bytes > _LAZY_LOAD_BYTES:
-                self._file_index = None
-                self._file_cache = None
                 self._scan_headers_batch(valid)
                 return
 
