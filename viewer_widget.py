@@ -28,7 +28,7 @@ from pass_parser import PassData
 # ── constants ───────────────────────────────────────────────────────
 # Diameter in nm = dwell_ns * _NM_PER_NS_DWELL  (10 nm per µs)
 _NM_PER_NS_DWELL = 0.01
-_DISC_SIZE_SCALE = 0.667
+_DISC_SIZE_SCALE = 1.0
 _SHOT_COLOR = np.array([0.30, 0.60, 1.00, 1.0])  # bright blue, fully opaque
 _ALPHA_NEAR = 1.00     # (legacy, unused — α max replaces this)
 _ALPHA_FAR  = 0.005    # Gaussian per-shot alpha at max zoom-out (tiny markers, need visibility)
