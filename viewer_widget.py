@@ -1101,6 +1101,12 @@ class ShotViewerWidget(QWidget):
         if self._wafer_diameter_nm is not None:
             self._reposition_wafer_outline()
 
+        # Recompute stride/alpha for the current camera — _upload_all_shots uses a
+        # static initial stride and doesn't know the zoom level.  Camera is already
+        # positioned by _fit_view() above, so run synchronously (no timer flash).
+        self._last_view_key = None
+        self._update_decim_stride()
+
         if self._density_enabled:
             self._rebuild_density_image()
 
