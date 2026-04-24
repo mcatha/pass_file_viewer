@@ -1062,10 +1062,6 @@ class ShotViewerWidget(QWidget):
         self._face_colors = _SHOT_COLOR
         self._recompute_base_color()
 
-        # Upload all points to GPU once — pan/zoom is a pure GPU matrix
-        # transform with zero CPU cost per frame.
-        self._upload_all_shots()
-
         # Lines data is DEFERRED until the user toggles them on (saves GPU upload)
         if self._lines.visible:
             self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
@@ -1101,9 +1097,7 @@ class ShotViewerWidget(QWidget):
         if self._wafer_diameter_nm is not None:
             self._reposition_wafer_outline()
 
-        # Recompute stride/alpha for the current camera — _upload_all_shots uses a
-        # static initial stride and doesn't know the zoom level.  Camera is already
-        # positioned by _fit_view() above, so run synchronously (no timer flash).
+        # Recompute stride/alpha for the current camera with correct dpp.
         self._last_view_key = None
         self._update_decim_stride()
 
@@ -1228,15 +1222,12 @@ class ShotViewerWidget(QWidget):
 
         # ── GPU upload ───────────────────────────────────────────────────────
         self._recompute_base_color()
-        self._upload_all_shots()
 
         if self._lines.visible:
             self._lines.set_data(self._lines_with_breaks(), color=_LINE_COLOR, width=1)
             self._lines_data_set = True
 
-        # Recompute stride/alpha for the current camera — _upload_all_shots uses a
-        # static initial stride and doesn't know the zoom level.  Camera is already
-        # positioned by _fit_view() above, so run synchronously (no timer flash).
+        # Recompute stride/alpha for the current camera with correct dpp.
         self._last_view_key = None
         self._update_decim_stride()
 
