@@ -37,15 +37,14 @@ from pathlib import Path
 _HERE   = Path(__file__).parent
 _LOGO   = _HERE.parent / "mb-logo-w-tag.png"
 
-# Set _TEST_STRIDE > 1 for a quick test run (generates every Nth pass only).
-# At stride 10 the full logo width is sampled at 1/10 density (~150 files).
-_TEST_STRIDE = 10
-OUT_DIR = _HERE.parent / ("logo_passes_test" if _TEST_STRIDE > 1 else "logo_passes")
+# Scale factor for the physical logo size (1.0 = full 300 mm wafer, 0.1 = ~25 mm wide test).
+_LOGO_SCALE = 0.1
+OUT_DIR = _HERE.parent / ("logo_passes" if _LOGO_SCALE == 1.0 else f"logo_passes_test")
 
 # ── Physical parameters (nm) ──────────────────────────────────────────────────
 # Scale logo so its corners fall exactly 1 mm inside the 300 mm wafer edge.
 # Logo pixel aspect: 600 × 145.  Corner radius = sqrt((W/2)² + (H/2)²) = 149 mm.
-_CORNER_R_NM   = 149_000_000   # 150 mm wafer radius − 1 mm margin
+_CORNER_R_NM   = round(149_000_000 * _LOGO_SCALE)  # 150 mm wafer radius − 1 mm margin, scaled
 _LOGO_DIAG_PX  = _math.sqrt(600**2 + 145**2)
 LOGO_WIDTH_NM  = round(2 * _CORNER_R_NM * 600 / _LOGO_DIAG_PX)
 LOGO_HEIGHT_NM = round(LOGO_WIDTH_NM * 145 / 600)
@@ -158,7 +157,7 @@ print(f"Pitch: {PITCH_NM} nm  Dwell: {DWELL_NS} ns  "
       f"Passes: {N_MASTER} × {len(BEAM_COLUMNS)} beams")
 print(f"Output: {OUT_DIR}\n")
 
-for n in range(1, N_MASTER + 1, _TEST_STRIDE):
+for n in range(1, N_MASTER + 1):
     P_X = P_X_FIRST + (n - 1) * PASS_WIDTH_NM
 
     for name, beam_x, xs_start, xs_end, ys_start, ys_end in BEAM_COLUMNS:
