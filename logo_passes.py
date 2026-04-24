@@ -54,10 +54,12 @@ LOGO_X_MAX =   LOGO_WIDTH_NM  // 2    # +125_000_000
 LOGO_Y_MIN = -(LOGO_HEIGHT_NM // 2)   # ≈ −30_208_333
 LOGO_Y_MAX =   LOGO_HEIGHT_NM + LOGO_Y_MIN   # ≈ +30_208_334
 
-PITCH_NM      = 1275     # shot pitch
+PITCH_NM      = 1275     # shot pitch (X and between-row distance)
+PITCH_Y_NM    = round(PITCH_NM * _math.sqrt(3) / 2)  # ≈ 1104 nm — hex row spacing
 PASS_WIDTH_NM = 60_000   # 60 µm stage X step
 DWELL_NS      = 16_000   # 16 µs
-HALF          = PITCH_NM // 2
+HALF          = PITCH_NM   // 2
+HALF_Y        = PITCH_Y_NM // 2
 
 # ── MB300 columns (from viewer_widget._MB300_FIDUCIALS) ──────────────────────
 # Each entry: (name, beam_X_nm, x_sec_start, x_sec_end, y_sec_start, y_sec_end)
@@ -112,19 +114,40 @@ _on_white = _lum * _alp + (1.0 - _alp)   # composite onto white background
 _VAL_MASK = _on_white[::-1, :]            # float [0,1]; row 0 → bottom; <0.5 is dark
 H_PX, W_PX = _VAL_MASK.shape
 
+def _bilinear_hit(IY_f: np.ndarray, valid_y: np.ndarray,
+                  IX_f: np.ndarray) -> np.ndarray:
+    """Return bool (N_Y × N_X) hit matrix via bilinear sampling of _VAL_MASK."""
+    iy0 = np.clip(np.floor(IY_f).astype(np.int32), 0, H_PX - 2)
+    ix0 = np.clip(np.floor(IX_f).astype(np.int32), 0, W_PX - 2)
+    iy1 = iy0 + 1
+    ix1 = ix0 + 1
+    wy1 = np.clip(IY_f - iy0, 0.0, 1.0).astype(np.float32)[:, None]
+    wy0 = 1.0 - wy1
+    wx1 = np.clip(IX_f - ix0, 0.0, 1.0).astype(np.float32)[None, :]
+    wx0 = 1.0 - wx1
+    sampled = (wy0 * (wx0 * _VAL_MASK[iy0[:, None], ix0[None, :]]
+                    + wx1 * _VAL_MASK[iy0[:, None], ix1[None, :]])
+             + wy1 * (wx0 * _VAL_MASK[iy1[:, None], ix0[None, :]]
+                    + wx1 * _VAL_MASK[iy1[:, None], ix1[None, :]]))
+    hit = sampled < 0.5
+    hit[~valid_y, :] = False
+    return hit
+
 # ── Pre-compute Y grids for each distinct Y section ───────────────────────────
-# Keyed by (y_sec_start, y_sec_end).
-_y_grids: dict[tuple[int, int], tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
+# Two interleaved grids per section: A (even X columns) and B (odd X columns,
+# offset by PITCH_Y/2) form a hexagonal close-packed pattern.
+_y_grids: dict[tuple[int, int], tuple] = {}
 for _, _, _, _, ys, ye in BEAM_COLUMNS:
     key = (ys, ye)
     if key in _y_grids:
         continue
     sec_len = ye - ys
-    Y_LOC = np.arange(HALF, sec_len, PITCH_NM, dtype=np.int64)
-    # Float pixel coordinate (0 = top of pixel[0]); -0.5 offset centres shots on pixels.
-    IY_f = (Y_LOC + ys - LOGO_Y_MIN) * H_PX / LOGO_HEIGHT_NM - 0.5
-    valid_y = (IY_f >= -0.5) & (IY_f < H_PX - 0.5)
-    _y_grids[key] = (Y_LOC, IY_f, valid_y)
+    def _make_grid(y_offset):
+        Y = np.arange(y_offset, sec_len, PITCH_Y_NM, dtype=np.int64)
+        IY = (Y + ys - LOGO_Y_MIN) * H_PX / LOGO_HEIGHT_NM - 0.5
+        valid = (IY >= -0.5) & (IY < H_PX - 0.5)
+        return Y, IY, valid
+    _y_grids[key] = (*_make_grid(HALF_Y), *_make_grid(HALF_Y + PITCH_Y_NM // 2))
 
 # ── v4 header (78 bytes, little-endian) ───────────────────────────────────────
 _HDR_FMT = "<IHHiiIIdHHdiQQQI??"
@@ -171,40 +194,41 @@ for n in range(1, N_MASTER + 1):
             continue
 
         x_abs = x_start + x_local
-        IX_f = (x_abs - LOGO_X_MIN) * W_PX / LOGO_WIDTH_NM - 0.5
+        Y_LOC_A, IY_A, valid_A, Y_LOC_B, IY_B, valid_B = _y_grids[(ys_start, ys_end)]
 
-        Y_LOCAL, IY_f, valid_y = _y_grids[(ys_start, ys_end)]
+        # Even-indexed X columns → grid A; odd → grid B (offset PITCH_Y/2 in Y).
+        # Together they form a hexagonal close-packed shot pattern.
+        parts_yl: list[np.ndarray] = []
+        parts_xl: list[np.ndarray] = []
+        for xi_slice, Y_LOC, IY_f, valid in (
+            (slice(None, None, 2), Y_LOC_A, IY_A, valid_A),
+            (slice(1,    None, 2), Y_LOC_B, IY_B, valid_B),
+        ):
+            xs = x_abs[xi_slice]
+            if len(xs) == 0:
+                continue
+            IX_f = (xs - LOGO_X_MIN) * W_PX / LOGO_WIDTH_NM - 0.5
+            sy, sx = np.nonzero(_bilinear_hit(IY_f, valid, IX_f))
+            if len(sy):
+                parts_yl.append(Y_LOC[sy])
+                parts_xl.append(x_local[xi_slice][sx])
 
-        # Bilinear interpolation on _VAL_MASK for sub-pixel-accurate edges.
-        iy0 = np.clip(np.floor(IY_f).astype(np.int32), 0, H_PX - 2)
-        ix0 = np.clip(np.floor(IX_f).astype(np.int32), 0, W_PX - 2)
-        iy1 = iy0 + 1
-        ix1 = ix0 + 1
-        wy1 = np.clip(IY_f - iy0, 0.0, 1.0).astype(np.float32)[:, None]
-        wy0 = 1.0 - wy1
-        wx1 = np.clip(IX_f - ix0, 0.0, 1.0).astype(np.float32)[None, :]
-        wx0 = 1.0 - wx1
-        sampled = (wy0 * (wx0 * _VAL_MASK[iy0[:, None], ix0[None, :]]
-                        + wx1 * _VAL_MASK[iy0[:, None], ix1[None, :]])
-                 + wy1 * (wx0 * _VAL_MASK[iy1[:, None], ix0[None, :]]
-                        + wx1 * _VAL_MASK[iy1[:, None], ix1[None, :]]))
-        hit = sampled < 0.5
-        hit[~valid_y, :] = False
-
-        sy, sx = np.nonzero(hit)
-        if len(sy) == 0:
+        if not parts_yl:
             continue
+
+        yl_all = np.concatenate(parts_yl)
+        xl_all = np.concatenate(parts_xl)
 
         _col_seq[name] += 1
         seq_n = _col_seq[name]
 
         if seq_n % 2 == 1:
-            order = np.argsort(-Y_LOCAL[sy], kind='stable')
+            order = np.argsort(-yl_all.astype(np.int64), kind='stable')
         else:
-            order = np.argsort( Y_LOCAL[sy], kind='stable')
+            order = np.argsort( yl_all,                  kind='stable')
 
-        xl = x_local[sx[order]].astype(np.uint64)
-        yl = Y_LOCAL[sy[order]].astype(np.uint64)
+        xl = xl_all[order].astype(np.uint64)
+        yl = yl_all[order].astype(np.uint64)
         records = (_dw << np.uint64(2)) | (xl << np.uint64(16)) | (yl << np.uint64(32))
 
         fname = OUT_DIR / f"{name}_{seq_n:04d}.pass"
@@ -212,11 +236,11 @@ for n in range(1, N_MASTER + 1):
             f.write(_pack_header(
                 seq_n, x_start, ys_start,
                 x_end - x_start, ys_end - ys_start,
-                len(sy),
+                len(yl),
             ))
             f.write(records.tobytes())
 
-        total_shots += len(sy)
+        total_shots += len(yl)
         total_files += 1
 
     if n % 100 == 0 or n == N_MASTER:
