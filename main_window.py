@@ -1190,6 +1190,8 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _on_header_scan_done(self, entries, error, extend: bool = False) -> None:
+        self._parse_thread = None
+        self._parse_worker = None
         QApplication.restoreOverrideCursor()
         if entries is None:
             QMessageBox.critical(self, "Error", f"Failed to scan headers:\n{error}")
