@@ -682,7 +682,7 @@ The `pass_viewer/` directory is a Git repository with remote at `https://github.
 | Box selection geometry | AABB pre-filter + quad edge test on background `QThread` | Main thread unblocked during large selections |
 | Box selection marker upload | Viewport cull skipped for selections >1M; cache key prevents redundant GPU uploads per frame | Pan/zoom stays smooth with large selections active |
 | Selection pane sort | `np.sort` on background `QThread`; "loading…" indicator shown immediately | Main thread unblocked for large sorted panes |
-| Hover lookup | Throttled to 60 fps via 16 ms timer | No redundant KD-tree queries |
+| Hover lookup | Query dispatched to background `QThread`; at most one in-flight at a time; latest position queued if busy | Main thread never blocks; tooltip tracks cursor continuously |
 
 ---
 
@@ -746,8 +746,11 @@ Only C-row cells (Y section ±32.5 mm) overlap the logo's ±30.2 mm Y extent. Al
 
 | Parameter | Value |
 |---|---|
-| Logo size | 250 mm × 60.42 mm (250 000 000 × 60 416 667 nm), centred on wafer |
-| Shot pitch | 1275 nm (20% overlap at 1600 nm beam FWHM) |
+| Logo size | 289.7 mm × 70.0 mm, centred on wafer; corners at 149 mm from centre (1 mm inside wafer edge) |
+| Shot pitch X | 900 nm |
+| Shot pitch Y | 779 nm (hexagonal close-packed: `round(900 × √3/2)`) |
+| Shot density | ~1 426 330 shots/mm² |
+| Estimated output | ~8.93 B shots, ~71.4 GB |
 | Beam FWHM | 1600 nm (dwell 16 000 ns × 100 nm/µs viewer default) |
 | Dwell | 16 000 ns (16 µs) |
 | Pass width (X step) | 60 000 nm (60 µm) |
@@ -755,13 +758,24 @@ Only C-row cells (Y section ±32.5 mm) overlap the logo's ±30.2 mm Y extent. Al
 ### Image sampling
 
 ```python
-lum   = (0.299*R + 0.587*G + 0.114*B) / 255.0
-alpha = A / 255.0
-dark_mask = (lum * alpha) < 0.5   # True = write a shot
-dark_mask = dark_mask[::-1, :]    # flip Y: row 0 → logo bottom on wafer
+lum      = (0.299*R + 0.587*G + 0.114*B) / 255.0
+alpha    = A / 255.0
+on_white = lum * alpha + (1.0 - alpha)   # composite onto white background
+dark     = on_white < 0.5                # True = write a shot
+dark     = dark[::-1, :]                 # flip Y: row 0 → logo bottom on wafer
 ```
 
-Shots are written only where `dark_mask` is True. Y coordinates outside `[0, H_PX)` image rows are masked out (not clamped) to avoid spurious shots at logo edges.
+Compositing onto white before thresholding correctly handles transparent pixels
+(background) — without it, transparent pixels have `lum × alpha = 0 < 0.5` and
+would incorrectly be treated as dark.  The logo has ~30.9 % fill (26 860 / 87 000
+pixels are dark after compositing).
+
+Shot positions within each pass use **bilinear interpolation** at fractional image
+coordinates (float pixel index with −0.5 offset) for smooth, anti-aliased edges.
+Shots are placed on a **hexagonal close-packed grid**: even-indexed X columns use
+row grid A; odd X columns use grid B (offset by `PITCH_Y/2` in Y), forming a
+triangular lattice with 100 % area coverage (maximum uncovered radius ≈ 736 nm,
+less than the 800 nm beam half-width).
 
 ### v4 embedded header
 
@@ -828,13 +842,16 @@ pass_viewer/
 
 ---
 
-## 19. Viewport-Aware Lazy Loading
+## 18. Viewport-Aware Lazy Loading
 
 ### Problem
 
-Opening a full MB300 logo write (~14 490 files, ~100 GB, ~12.5 B shots) requires
-~200 GB RAM with the original approach (all shots decoded into float64 x/y arrays).
-Target machines have 16–64 GB.
+Opening a large multi-file pass set requires decoding all shots into float64 x/y
+arrays, which can exhaust available RAM.  The MB300 logo write (~8 930 files,
+~71 GB, ~8.93 B shots at 900 nm hex pitch) already exceeds memory on 16 GB
+machines.  Production IC patterns may be substantially larger — data volumes for
+real chip writes are unknown, as this is a new technology.  Target machines have
+16–64 GB.
 
 ### Solution
 
@@ -881,15 +898,62 @@ Target machines have 16–64 GB.
 
 | Zoom | Files in viewport | Loaded |
 |---|---|---|
-| Full wafer (all files) | 14 490 | Spatial sample (~58 files) — logo shape visible |
-| Region (1/250 of wafer) | ~58 | All in-viewport files — full shot resolution |
+| Full wafer (all files) | N (all) | Spatial sample capped at `_RAM_BUDGET_SHOTS / avg_shots` — pattern shape visible |
+| Sub-region | Fraction of N | All in-viewport files (if within budget) — full shot resolution |
 | Single stripe | 1 | That file — every individual shot accessible |
 
 ---
 
-## 18. Glossary
+---
 
-| Term | Definition |
+## 19. Open Questions
+
+This tool is being developed alongside a new technology (MB300 multi-beam EBL
+for IC production).  Real chip pattern data does not yet exist.  Several design
+assumptions are therefore provisional:
+
+### Data volumes
+
+The only large write jobs tested so far are the MB300 logo test patterns (~71 GB,
+~8.93 B shots).  For production IC patterns at 50 nm feature sizes the shot pitch
+will be an order of magnitude finer, shot counts per die will be vastly higher,
+and the number of dies per wafer is unknown.  Total write job size for a real chip
+pattern could range from manageable to orders of magnitude larger than the logo
+test.
+
+### Performance bottlenecks
+
+Several potential bottlenecks have been identified but not validated against real
+data:
+
+| Concern | Status |
+|---|---|
+| RAM spike on numpy boolean-mask filtering | Real but low priority at current logo-scale volumes |
+| Vispy scene-graph overhead at high file counts | Not a concern — single Visual node used, not one per file |
+| Header scan speed for very large file sets | Handled by 32-thread pool; ProcessPoolExecutor not needed for I/O-bound work |
+| Zoom-out density representation | Unsolved — splatting fails when decimation stride is large; density texture requires reading all shot data |
+
+### Zoom-out density display
+
+The current approach (priority-based decimation + Gaussian splatting) produces a
+faithful image when individual shots are visible, but breaks at extreme zoom-out:
+the surviving decimated shots are too far apart to overlap, so the pattern reads
+as a sparse point cloud instead of a solid shape.
+
+The correct fix is a pre-integrated density image (2D histogram of all shots),
+displayed as a `vispy.scene.visuals.Image` when `dpp > shot_pitch`.  Building
+this requires reading all shot data — either a one-time background strided-read
+pass at open time, or accepting that the image represents only the loaded cache.
+The right trade-off cannot be determined without knowing real chip pattern data
+volumes and the storage medium (local SSD vs network share).
+
+**Design principle:** do not build elaborate infrastructure for bottlenecks that
+have not materialized in practice.  Defer the density-image implementation until
+real IC pattern files exist and the actual zoom-out behaviour can be evaluated.
+
+---
+
+## 20. Glossary
 |------|-----------|
 | **Shot** | A single electron beam exposure point with X, Y, and dwell time |
 | **Dwell** | Duration (ns) the beam stays at a position; determines dose and rendered size |
