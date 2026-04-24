@@ -915,7 +915,42 @@ real chip writes are unknown, as this is a new technology.  Target machines have
 
 ---
 
-## 19. Open Questions
+## 19. Threading and State Ownership
+
+### Principle 1 — Every entry path into a subsystem must reset all state that subsystem owns
+
+When an operation "takes ownership" of a resource (the file index, the cache, the loaded data), it must reset that resource on **every path** that initiates a new operation, not just the primary one.
+
+In practice: `_file_index` and `_file_cache` were reset on the lazy-load entry path but not on the single-file or small-batch paths. Any pending viewport debounce timer fires after the new load completes, queries the stale `_file_index`, and reloads the old files over the new data. The fix: reset shared state at the earliest common point — before branching into individual load paths — not inside each branch.
+
+**Rule:** if a variable is cleared in some entry paths but not others, it will carry stale state into the next operation on the paths that skip the clear. State that belongs to an operation must be cleared before that operation starts, unconditionally.
+
+### Principle 2 — Thread completion callbacks must verify ownership before modifying shared state
+
+Qt signals connected to `thread.finished` are queued cross-thread signals. They fire in the main event loop **after** `wait()` returns — potentially after a new thread has already been assigned to the same slot variable. An unconditional clear (`self._parse_thread = None`) will null out the active thread's reference if the stale signal fires second.
+
+The correct pattern — already used for the header scan thread — is to capture the thread reference in a lambda and check identity before acting:
+
+```python
+thread.finished.connect(lambda t=thread: self._on_foo_thread_done(t))
+
+def _on_foo_thread_done(self, thread) -> None:
+    if self._foo_thread is thread:
+        self._foo_thread = None
+        self._foo_worker = None
+```
+
+**Rule:** every `thread.finished` callback that modifies shared state must confirm it is being called for the thread that currently owns that state. An unconditional clear is always wrong when multiple sequential threads use the same slot variable.
+
+### Principle 3 — When a deferred computation replaces a fallback, it must immediately invalidate the fallback's output
+
+The priority argsort runs on a background thread after load. Before it finishes, `_priority_indices` falls back to a different selection algorithm. When the argsort completes, simply storing the result is not enough — the display still reflects the fallback's output until the next camera event. Any fallback that produces a different result than the real computation must trigger a re-render when the real result arrives.
+
+**Rule:** if a deferred result changes what would be computed, completing that deferred work must invalidate the cache key and re-run the dependent computation, not just store the result for the next query.
+
+---
+
+## 20. Open Questions
 
 This tool is being developed alongside a new technology (MB300 multi-beam EBL
 for IC production).  Real chip pattern data does not yet exist.  Several design
@@ -962,7 +997,7 @@ real IC pattern files exist and the actual zoom-out behaviour can be evaluated.
 
 ---
 
-## 20. Glossary
+## 21. Glossary
 |------|-----------|
 | **Shot** | A single electron beam exposure point with X, Y, and dwell time |
 | **Dwell** | Duration (ns) the beam stays at a position; determines dose and rendered size |
