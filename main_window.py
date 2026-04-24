@@ -349,6 +349,17 @@ class MainWindow(QMainWindow):
         col_pos_menu.addAction(mb300_act)
         self._col_pos_group.triggered.connect(self._on_column_positions_select)
 
+        # ── Density Map toggle ────────────────────────────────────
+        self._density_act = QAction("&Density Map", self)
+        self._density_act.setCheckable(True)
+        self._density_act.setChecked(False)
+        self._density_act.setToolTip(
+            "Show a log-density histogram image at zoom levels where "
+            "individual shots are sub-pixel."
+        )
+        self._density_act.toggled.connect(self._viewer.set_density_enabled)
+        view_menu.addAction(self._density_act)
+
         view_menu.addSeparator()
 
         self._selection_pane_act = QAction("Show &Selection Pane", self)

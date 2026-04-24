@@ -35,6 +35,10 @@ _ALPHA_FAR  = 0.005    # Gaussian per-shot alpha at max zoom-out (tiny markers, 
 _ALPHA_MAX  = 0.330    # Gaussian per-shot alpha cap at close zoom
 _DISC_OVERLAP_WHITE = 0.05  # disc-mode: additive white alpha per overlap
 
+# Density map fade thresholds (dpp = nm per screen pixel)
+_DENSITY_DPP_OPAQUE = 5_000.0   # above this → density image fully opaque
+_DENSITY_DPP_FADE   = 1_000.0   # below this → density image fully transparent
+
 _SELECTED_COLOR = np.array([1.0, 0.90, 0.0, 1.0])  # bright gold for selected shot
 _BOX_SELECTED_COLOR = np.array([0.3, 1.0, 0.5, 0.5])  # bright green for box-selected
 _LINE_COLOR = (1.0, 0.40, 0.25, 0.7)      # bright red-ish
@@ -226,6 +230,49 @@ class _HoverWorker(QObject):
                 result = orig
                 break
         self.finished.emit(result, self._mx, self._my)
+
+
+class _DensityWorker(QObject):
+    """Builds a 2D log-density histogram image on a background thread."""
+    finished = pyqtSignal(object)  # emits (rgba_array, x0, y0, px_w, px_h)
+
+    def __init__(self, positions: np.ndarray, color_rgb: tuple[float, float, float]) -> None:
+        super().__init__()
+        self._positions  = positions   # centroid-shifted float32 (N, 2)
+        self._color_rgb  = color_rgb
+
+    def run(self) -> None:
+        x = self._positions[:, 0].astype(np.float64)
+        y = self._positions[:, 1].astype(np.float64)
+        x0, x1 = float(x.min()), float(x.max())
+        y0, y1 = float(y.min()), float(y.max())
+        data_w = max(x1 - x0, 1.0)
+        data_h = max(y1 - y0, 1.0)
+
+        max_bins = 2048
+        if data_w >= data_h:
+            nx = max_bins
+            ny = max(1, round(max_bins * data_h / data_w))
+        else:
+            ny = max_bins
+            nx = max(1, round(max_bins * data_w / data_h))
+
+        H, _, _ = np.histogram2d(x, y, bins=[nx, ny],
+                                  range=[[x0, x1], [y0, y1]])
+        # H shape: (nx, ny) → transpose to (ny, nx): rows = Y bins, cols = X bins
+        H = H.T.astype(np.float32)
+        H = np.log1p(H)
+        if H.max() > 0:
+            H /= H.max()
+
+        r, g, b = self._color_rgb
+        rgba = np.empty((*H.shape, 4), dtype=np.float32)
+        rgba[..., 0] = H * r
+        rgba[..., 1] = H * g
+        rgba[..., 2] = H * b
+        rgba[..., 3] = H   # alpha proportional to density
+
+        self.finished.emit((rgba, x0, y0, data_w / nx, data_h / ny))
 
 
 class _ArgsortWorker(QObject):
@@ -605,6 +652,16 @@ class ShotViewerWidget(QWidget):
         self._grid = visuals.GridLines(parent=self._view.scene, color=(0.3, 0.3, 0.3, 0.5))
         self._visual_root = scene.Node(parent=self._view.scene)
 
+        # ── Density map image (behind all markers; invisible until built) ──
+        self._density_visual = visuals.Image(
+            np.zeros((1, 1, 4), dtype=np.float32),
+            parent=self._visual_root,
+            interpolation='linear',
+        )
+        self._density_visual.set_gl_state(blend=True, depth_test=False,
+                                           blend_func=('src_alpha', 'one_minus_src_alpha'))
+        self._density_visual.visible = False
+
         # ── Gaussian markers: additive Gaussian PSF ─────────────────
         self._gauss_markers = GaussianMarkers(parent=self._visual_root,
                                                antialias=2,
@@ -870,6 +927,10 @@ class ShotViewerWidget(QWidget):
         self._hover_worker_thread: QThread | None = None
         self._queued_hover_args: tuple | None = None
 
+        # Density map state
+        self._density_enabled: bool = False
+        self._density_thread: QThread | None = None
+
         # Stripe region hover state
         self._stripe_regions: list[dict] = []
         self._stripe_aabbs: list[tuple[float, float, float, float]] = []
@@ -1062,6 +1123,9 @@ class ShotViewerWidget(QWidget):
         if self._wafer_diameter_nm is not None:
             self._reposition_wafer_outline()
 
+        if self._density_enabled:
+            self._rebuild_density_image()
+
     def append_data(self, new_data: PassData) -> None:
         """Append shots from new_data without re-processing the existing dataset.
 
@@ -1184,6 +1248,9 @@ class ShotViewerWidget(QWidget):
         # Recompute stride/alpha for the current camera — _upload_all_shots uses a
         # static initial stride and doesn't know the zoom level.
         self._shot_decim_timer.start()
+
+        if self._density_enabled:
+            self._rebuild_density_image()
 
     def set_stripe_regions(self, regions: list[dict]) -> None:
         """Set stripe region metadata for hover-activated rectangle display."""
@@ -1395,7 +1462,8 @@ class ShotViewerWidget(QWidget):
     def shutdown(self) -> None:
         """Stop all background threads and timers.  Call before the widget is destroyed."""
         self._shot_decim_timer.stop()
-        for attr in ('_kdtree_thread', '_argsort_thread', '_box_sel_thread', '_hover_worker_thread'):
+        for attr in ('_kdtree_thread', '_argsort_thread', '_box_sel_thread',
+                     '_hover_worker_thread', '_density_thread'):
             t = getattr(self, attr, None)
             if t is not None:
                 t.quit()
@@ -1526,6 +1594,8 @@ class ShotViewerWidget(QWidget):
         if self._all_positions is not None:
             self._upload_all_shots()
             self._canvas.update()
+        if self._density_enabled and self._positions is not None:
+            self._rebuild_density_image()
 
     @property
     def shot_color(self) -> tuple[float, float, float, float]:
@@ -2030,6 +2100,9 @@ class ShotViewerWidget(QWidget):
                 face_color=overlap_color, edge_color=overlap_color,
                 edge_width=0,
             )
+
+        if self._density_enabled and self._density_visual.visible:
+            self._update_density_opacity(dpp)
 
     def _update_decim_stride(self) -> None:
         """Viewport cull + zoom-adaptive stride decimation.
@@ -2660,6 +2733,66 @@ class ShotViewerWidget(QWidget):
         if indices is not None and len(indices) == 0:
             indices = None
         self._locked_indices = indices
+
+    # ── Density map ───────────────────────────────────────────────────────────
+
+    def set_density_enabled(self, enabled: bool) -> None:
+        """Show or hide the zoom-out density map overlay."""
+        self._density_enabled = enabled
+        if not enabled:
+            self._density_visual.visible = False
+            self._canvas.update()
+        elif self._positions is not None:
+            self._rebuild_density_image()
+
+    def _rebuild_density_image(self) -> None:
+        """Dispatch a background rebuild of the density histogram image."""
+        if not self._density_enabled or self._positions is None:
+            return
+        if self._density_thread is not None:
+            self._density_thread.quit()
+            self._density_thread.wait()
+            self._density_thread = None
+        r, g, b = float(_SHOT_COLOR[0]), float(_SHOT_COLOR[1]), float(_SHOT_COLOR[2])
+        worker = _DensityWorker(self._positions.copy(), (r, g, b))
+        thread = QThread(self)
+        self._density_thread = thread
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_density_ready)
+        worker.finished.connect(lambda *_: thread.quit())
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def _on_density_ready(self, payload: tuple) -> None:
+        """Apply the finished density image to the scene."""
+        self._density_thread = None
+        if not self._density_enabled:
+            return
+        rgba, x0, y0, px_w, px_h = payload
+        self._density_visual.set_data(rgba)
+        # STTransform maps image pixel (col, row) → data (x0 + col*px_w, y0 + row*px_h)
+        self._density_visual.transform = scene.transforms.STTransform(
+            scale=(px_w, px_h), translate=(x0, y0),
+        )
+        self._density_visual.visible = True
+        dpp = self._get_data_per_px()
+        if dpp is not None:
+            self._update_density_opacity(dpp)
+        self._canvas.update()
+
+    def _update_density_opacity(self, dpp: float) -> None:
+        """Fade the density image in/out based on zoom level (linear in log-dpp)."""
+        hi = _DENSITY_DPP_OPAQUE
+        lo = _DENSITY_DPP_FADE
+        if dpp >= hi:
+            opacity = 1.0
+        elif dpp <= lo:
+            opacity = 0.0
+        else:
+            t = (_math.log(dpp) - _math.log(lo)) / (_math.log(hi) - _math.log(lo))
+            opacity = t
+        self._density_visual.opacity = opacity
 
     def _dispatch_hover(self, args: tuple) -> None:
         """Start a background hover query for *args* = (scene_pos, min_r, mx, my)."""
