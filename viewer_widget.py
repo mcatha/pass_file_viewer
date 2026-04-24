@@ -1898,10 +1898,9 @@ class ShotViewerWidget(QWidget):
             # when ready; fall back to argpartition while background sort runs.
             if self._priority_sorted is not None:
                 return self._priority_sorted[:count]
-            # Sort not ready — uniform stride is O(count) vs O(N) for argpartition.
-            # Next camera event will upgrade to priority order once sort completes.
-            step = max(1, n_vis // count)
-            return np.arange(0, n_vis, step, dtype=np.intp)[:count]
+            # Sort not ready — show nothing; _on_argsort_ready will trigger a
+            # re-render with the correct priority selection once it completes.
+            return np.empty(0, dtype=np.intp)
         priorities = self._shot_priority[vis_idx]
         top_k = np.argpartition(priorities, count)[:count]
         return vis_idx[top_k]
