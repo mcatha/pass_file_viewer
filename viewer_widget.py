@@ -2073,17 +2073,22 @@ class ShotViewerWidget(QWidget):
         if n == 0:
             return
 
-        bounds = self._get_viewport_bounds()
-        if bounds is None:
+        # camera.rect is updated synchronously by set_range() and is always
+        # current — unlike node_transform which vispy recomputes on first draw.
+        # Under rotation the camera rect is conservative (unrotated AABB) which
+        # is fine: slightly over-selects shots but never under-selects.
+        r = self._camera.rect
+        xmin = float(min(r.left, r.right))
+        xmax = float(max(r.left, r.right))
+        ymin = float(min(r.top, r.bottom))
+        ymax = float(max(r.top, r.bottom))
+        if xmin == xmax or ymin == ymax:
             return
-        xmin, xmax, ymin, ymax = bounds
 
-        # Add margin: 5% of viewport + half the largest rendered disc diameter,
-        # so shots whose centers are just off-screen but whose discs extend
-        # into view aren't culled.  The base layer inflates to at least dpp,
-        # so use max(max_size, dpp) for the radius term.
         canvas_px = max(self._canvas.native.width(), 1)
-        dpp = self._get_data_per_px() or (float(self._camera.rect.width) / canvas_px)
+        dpp = float(r.width) / canvas_px
+        if dpp <= 0:
+            return
 
         if self._uniform_size is not None:
             max_shot_size = self._uniform_size
