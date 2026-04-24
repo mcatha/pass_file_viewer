@@ -1291,7 +1291,7 @@ class MainWindow(QMainWindow):
             self._parse_thread.wait()
 
         n = len(paths)
-        stride_note = f" (stride {stride})" if stride > 1 else ""
+        stride_note = f" (1 in {stride} shots)" if stride > 1 else ""
         self._status_label.setText(f"  Loading {n} files{stride_note}…")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
 
