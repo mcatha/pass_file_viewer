@@ -150,6 +150,7 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 _dw = np.uint64(DWELL_NS)
 total_shots = 0
 total_files = 0
+_col_seq: dict[str, int] = {name: 0 for name, *_ in BEAM_COLUMNS}  # per-column pass counter
 
 print(f"Logo: {W_PX}×{H_PX} px → "
       f"{LOGO_WIDTH_NM/1e6:.0f} mm × {LOGO_HEIGHT_NM/1e6:.2f} mm")
@@ -185,7 +186,10 @@ for n in range(1, N_MASTER + 1):
         if len(sy) == 0:
             continue
 
-        if n % 2 == 1:
+        _col_seq[name] += 1
+        seq_n = _col_seq[name]
+
+        if seq_n % 2 == 1:
             order = np.argsort(-Y_LOCAL[sy], kind='stable')
         else:
             order = np.argsort( Y_LOCAL[sy], kind='stable')
@@ -194,10 +198,10 @@ for n in range(1, N_MASTER + 1):
         yl = Y_LOCAL[sy[order]].astype(np.uint64)
         records = (_dw << np.uint64(2)) | (xl << np.uint64(16)) | (yl << np.uint64(32))
 
-        fname = OUT_DIR / f"{name}_{n:04d}.pass"
+        fname = OUT_DIR / f"{name}_{seq_n:04d}.pass"
         with open(fname, "wb") as f:
             f.write(_pack_header(
-                n, x_start, ys_start,
+                seq_n, x_start, ys_start,
                 x_end - x_start, ys_end - ys_start,
                 len(sy),
             ))
