@@ -38,7 +38,7 @@ _HERE   = Path(__file__).parent
 _LOGO   = _HERE.parent / "mb-logo-w-tag.png"
 
 # Scale factor for the physical logo size (1.0 = full 300 mm wafer, 0.1 = ~25 mm wide test).
-_LOGO_SCALE = 0.1
+_LOGO_SCALE = 1.0
 OUT_DIR = _HERE.parent / ("logo_passes" if _LOGO_SCALE == 1.0 else f"logo_passes_test")
 
 # ── Physical parameters (nm) ──────────────────────────────────────────────────
