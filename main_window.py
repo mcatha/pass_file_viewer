@@ -1063,7 +1063,7 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._on_multi_parse_finished)
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._on_parse_thread_done)
+        thread.finished.connect(lambda t=thread: self._on_parse_thread_done(t))
         self._parse_thread = thread
         self._parse_worker = worker
         thread.start()
@@ -1158,16 +1158,17 @@ class MainWindow(QMainWindow):
         worker.finished.connect(self._on_parse_finished)
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._on_parse_thread_done)
+        thread.finished.connect(lambda t=thread: self._on_parse_thread_done(t))
         self._parse_thread = thread
         self._parse_worker = worker
         self._pending_path = path
         thread.start()
 
-    def _on_parse_thread_done(self) -> None:
-        """Called when the parse thread has fully stopped."""
-        self._parse_thread = None
-        self._parse_worker = None
+    def _on_parse_thread_done(self, thread) -> None:
+        """Called when a parse thread has fully stopped."""
+        if self._parse_thread is thread:
+            self._parse_thread = None
+            self._parse_worker = None
 
     # ── lazy loading ────────────────────────────────────────────────
 
@@ -1309,7 +1310,7 @@ class MainWindow(QMainWindow):
         )
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._on_parse_thread_done)
+        thread.finished.connect(lambda t=thread: self._on_parse_thread_done(t))
         self._parse_thread = thread
         self._parse_worker = worker
         thread.start()
