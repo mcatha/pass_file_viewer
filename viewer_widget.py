@@ -1495,8 +1495,8 @@ class ShotViewerWidget(QWidget):
         # Pixel sizes: full at dpp ≤ 300 nm/px, shrink beyond that.
         _DPP_REF = 300.0
         scale = min(1.0, (_DPP_REF / max(dpp, _DPP_REF)) ** 0.75) if dpp else 1.0
-        halo_px = max(2, round(52 * scale))
-        core_px = max(1, round(18 * scale))
+        halo_px = max(2, round(32 * scale))
+        core_px = max(1, round(10 * scale))
 
         # Halo: large soft disc
         self._shot1_halo.set_data(
