@@ -149,6 +149,34 @@ def parse_meta_file(path: str | Path) -> PassHeader:
     return _parse_header_bytes(raw)
 
 
+def parse_pass_header_only(path: str | Path) -> PassHeader:
+    """Read header metadata without decoding shot records.
+
+    Checks for a companion .pass.meta file first (tiny, fast).  If absent,
+    reads just the first 78–88 bytes of the .pass file looking for an embedded
+    header.  Returns a default PassHeader() if no valid header is found.
+
+    Use this when you need spatial/count metadata for many files without the
+    cost of reading gigabytes of shot data.
+    """
+    path = Path(path)
+    meta_path = path.parent / (path.name + ".meta")
+    if meta_path.is_file():
+        return parse_meta_file(meta_path)
+    try:
+        with open(path, 'rb') as f:
+            magic_bytes = f.read(6)
+        if (len(magic_bytes) >= 6
+                and struct.unpack_from("<I", magic_bytes, 0)[0] == _STRIPE_SYMBOL):
+            version = struct.unpack_from("<H", magic_bytes, 4)[0]
+            size = _V211_SIZE if version == 2 else _V4_SIZE
+            with open(path, 'rb') as f:
+                return _parse_header_bytes(f.read(size))
+    except OSError:
+        pass
+    return PassHeader()
+
+
 def _read_records(raw, offset: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Extract shot arrays from raw 8-byte records starting at *offset*.
 

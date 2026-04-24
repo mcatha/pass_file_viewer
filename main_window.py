@@ -4,9 +4,12 @@ Main application window — menus, status bar, file loading.
 
 from __future__ import annotations
 
+import math
+from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QThread, QObject, QPoint, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QObject, QPoint, QTimer, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QKeySequence, QColor, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QMainWindow,
@@ -31,7 +34,7 @@ import sys as _sys
 
 import numpy as np
 
-from pass_parser import parse_pass_file, PassData
+from pass_parser import parse_pass_file, parse_pass_header_only, PassData, PassHeader
 from viewer_widget import ShotViewerWidget
 from selection_pane import SelectionPane
 
@@ -85,6 +88,127 @@ class _MultiParseWorker(QObject):
         self.finished.emit(ordered, None)
 
 
+# ── Lazy-loading constants ───────────────────────────────────────────────────
+# Switch to viewport-aware lazy loading when total file size exceeds this.
+_LAZY_LOAD_BYTES   = 400_000_000   # 400 MB ≈ 50 M shots at 8 bytes/shot
+_RAM_BUDGET_SHOTS  = 50_000_000    # max shots to keep in RAM at once (~1.8 GB)
+
+
+@dataclass
+class FileEntry:
+    """Spatial metadata for one .pass file — no shot data."""
+    path:     Path
+    origin_x: int   # stripeOriginX (nm)
+    origin_y: int   # stripeOriginY (nm)
+    width:    int   # stripeWidth   (nm)
+    length:   int   # stripeLength  (nm)
+    shot_count: int # from header, or estimated from file size
+
+
+class FileIndex:
+    """Spatial index of FileEntry objects — supports rectangle queries."""
+
+    def __init__(self, entries: list[FileEntry]) -> None:
+        self.entries = entries
+
+    def query(self, x0: float, y0: float, x1: float, y1: float) -> list[FileEntry]:
+        """Return entries whose bounding box intersects the given rect."""
+        result = []
+        for e in self.entries:
+            ex0, ey0 = e.origin_x, e.origin_y
+            ex1, ey1 = e.origin_x + e.width, e.origin_y + e.length
+            if ex1 >= x0 and ex0 <= x1 and ey1 >= y0 and ey0 <= y1:
+                result.append(e)
+        return result
+
+
+class FileCache:
+    """LRU cache of parsed PassData objects, bounded by total shot count."""
+
+    def __init__(self, max_shots: int) -> None:
+        self._max_shots = max_shots
+        self._data: OrderedDict[Path, PassData] = OrderedDict()
+        self._total_shots = 0
+
+    @property
+    def total_shots(self) -> int:
+        return self._total_shots
+
+    def get(self, path: Path) -> PassData | None:
+        if path in self._data:
+            self._data.move_to_end(path)
+            return self._data[path]
+        return None
+
+    def put(self, path: Path, data: PassData) -> None:
+        if path in self._data:
+            self._total_shots -= self._data[path].count
+        self._data[path] = data
+        self._data.move_to_end(path)
+        self._total_shots += data.count
+        # Evict oldest entries if over budget (but never evict the entry we
+        # just added or we'd loop forever on a file larger than the budget).
+        while self._total_shots > self._max_shots and len(self._data) > 1:
+            oldest_path = next(iter(self._data))
+            if oldest_path == path:
+                break
+            self.evict(oldest_path)
+
+    def evict(self, path: Path) -> None:
+        if path in self._data:
+            self._total_shots -= self._data[path].count
+            del self._data[path]
+
+    def paths(self) -> set[Path]:
+        return set(self._data.keys())
+
+
+def _spatial_sample(candidates: list[FileEntry], n: int) -> list[FileEntry]:
+    """Return n spatially-distributed entries from candidates."""
+    ordered = sorted(candidates, key=lambda e: (e.origin_x, e.origin_y))
+    step = max(1, len(ordered) // n)
+    return ordered[::step][:n]
+
+
+class _HeaderScanWorker(QObject):
+    """Reads headers only (no shot data) for many .pass files in parallel."""
+    progress = pyqtSignal(int, int)          # (completed, total)
+    finished = pyqtSignal(object, object)    # (list[FileEntry], None) or (None, error_str)
+
+    def __init__(self, paths: list[Path]) -> None:
+        super().__init__()
+        self._paths = paths
+
+    def run(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        n = len(self._paths)
+        results: dict[Path, PassHeader] = {}
+        with ThreadPoolExecutor(max_workers=32) as pool:
+            futures = {pool.submit(parse_pass_header_only, p): p for p in self._paths}
+            for future in as_completed(futures):
+                path = futures[future]
+                try:
+                    results[path] = future.result()
+                except Exception as exc:
+                    self.finished.emit(None, f"{path.name}: {exc}")
+                    return
+                self.progress.emit(len(results), n)
+        entries: list[FileEntry] = []
+        for p in self._paths:
+            h = results[p]
+            shot_count = (h.shotCount if h.shotCount > 0
+                          else max(0, (p.stat().st_size - 78) // 8))
+            entries.append(FileEntry(
+                path=p,
+                origin_x=h.stripeOriginX,
+                origin_y=h.stripeOriginY,
+                width=max(h.stripeWidth, 1),
+                length=max(h.stripeLength, 1),
+                shot_count=shot_count,
+            ))
+        self.finished.emit(entries, None)
+
+
 class MainWindow(QMainWindow):
     """Top-level window for the Pass File Viewer."""
 
@@ -118,10 +242,19 @@ class MainWindow(QMainWindow):
         self._selection_pane.shot_activated.connect(self._viewer.click_select_shot)
         # Background parse thread state
         self._parse_thread: QThread | None = None
-        self._parse_worker: _ParseWorker | None = None
+        self._parse_worker: QObject | None = None
         self._loaded_files: list[tuple[PassData, Path]] = []
         self._file_selected: set[int] = set()  # file indices currently "file-selected"
         self._next_load_incremental: bool = False
+        # Lazy loading state (activated for large file sets)
+        self._file_index: FileIndex | None = None
+        self._file_cache: FileCache | None = None
+        self._lazy_first_load: bool = True
+        self._pending_viewport: tuple[float, float, float, float] | None = None
+        self._viewport_debounce_timer = QTimer(self)
+        self._viewport_debounce_timer.setSingleShot(True)
+        self._viewport_debounce_timer.timeout.connect(self._on_viewport_debounce_done)
+        self._viewer.viewport_rect_changed.connect(self._on_viewport_rect_changed)
         # ── status bar ──────────────────────────────────────────────
         self._status_label = QLabel("  No file loaded")
         self._status_label.setStyleSheet("color: #aaa;")
@@ -760,13 +893,26 @@ class MainWindow(QMainWindow):
         if not valid:
             return
 
-        # Single file: use the fast single-file path
         self._next_load_incremental = False
+
+        # Large file set: use viewport-aware lazy loading
+        if len(valid) > 1:
+            try:
+                total_bytes = sum(p.stat().st_size for p in valid)
+            except OSError:
+                total_bytes = 0
+            if total_bytes > _LAZY_LOAD_BYTES:
+                self._file_index = None
+                self._file_cache = None
+                self._scan_headers_batch(valid)
+                return
+
+        # Single file: use the fast single-file path
         if len(valid) == 1:
             self._open_file(valid[0])
             return
 
-        # Multiple files: parse all at once, then render once
+        # Multiple files (small total): parse all at once, then render once
         self._open_files_batch(valid)
 
     def _on_incremental_open(self) -> None:
@@ -798,6 +944,11 @@ class MainWindow(QMainWindow):
             valid.append(pass_path)
 
         if not valid:
+            return
+
+        # If already in lazy-loading mode, extend the index and trigger reload
+        if self._file_index is not None:
+            self._scan_headers_batch(valid, extend=True)
             return
 
         self._next_load_incremental = True
@@ -1004,6 +1155,238 @@ class MainWindow(QMainWindow):
         """Called when the parse thread has fully stopped."""
         self._parse_thread = None
         self._parse_worker = None
+
+    # ── lazy loading ────────────────────────────────────────────────
+
+    def _scan_headers_batch(self, paths: list[Path], extend: bool = False) -> None:
+        """Scan headers only (no shot data) for all paths, then build FileIndex."""
+        if self._parse_thread is not None:
+            self._parse_thread.quit()
+            self._parse_thread.wait()
+
+        n = len(paths)
+        self._status_label.setText(f"  Scanning {n} file headers…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+
+        thread = QThread(self)
+        worker = _HeaderScanWorker(paths)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(
+            lambda cur, tot: self._status_label.setText(
+                f"  Scanned {cur}/{tot} headers…"
+            )
+        )
+        # Use a lambda to carry the extend flag into the callback
+        worker.finished.connect(
+            lambda entries, err, _ext=extend: self._on_header_scan_done(entries, err, _ext)
+        )
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_parse_thread_done)
+        self._parse_thread = thread
+        self._parse_worker = worker
+        thread.start()
+
+    def _on_header_scan_done(self, entries, error, extend: bool = False) -> None:
+        QApplication.restoreOverrideCursor()
+        if entries is None:
+            QMessageBox.critical(self, "Error", f"Failed to scan headers:\n{error}")
+            self._status_label.setText("  Error scanning files")
+            return
+
+        if extend and self._file_index is not None:
+            # Add new entries; skip duplicates
+            existing = {e.path for e in self._file_index.entries}
+            new_entries = [e for e in entries if e.path not in existing]
+            self._file_index.entries.extend(new_entries)
+        else:
+            self._file_index = FileIndex(entries)
+            self._file_cache = FileCache(_RAM_BUDGET_SHOTS)
+            self._loaded_files = []
+            self._file_selected.clear()
+            self._lazy_first_load = True
+
+        n = len(self._file_index.entries)
+        self.setWindowTitle(f"Pass File Viewer — {n} files (indexed)")
+        self._status_label.setText(f"  {n} files indexed — loading viewport…")
+        QApplication.processEvents()
+
+        # Trigger initial load over full spatial extent of the index
+        all_entries = self._file_index.entries
+        x0 = float(min(e.origin_x for e in all_entries))
+        x1 = float(max(e.origin_x + e.width for e in all_entries))
+        y0 = float(min(e.origin_y for e in all_entries))
+        y1 = float(max(e.origin_y + e.length for e in all_entries))
+        self._update_viewport_files(x0, x1, y0, y1)
+
+    def _update_viewport_files(self, x0: float, x1: float,
+                                y0: float, y1: float) -> None:
+        """Determine which files should be loaded for the given viewport rect
+        and start loading any that are missing from the cache."""
+        if self._file_index is None or self._file_cache is None:
+            return
+        if self._parse_thread is not None:
+            # A load is already in progress; let it finish, then re-evaluate
+            return
+
+        candidates = self._file_index.query(x0, y0, x1, y1)
+        if not candidates:
+            return
+
+        # Budget: how many files can we keep loaded at once?
+        total_index_shots = sum(e.shot_count for e in self._file_index.entries)
+        n_idx = len(self._file_index.entries)
+        avg_shots = total_index_shots / n_idx if n_idx else 1
+        budget_files = max(1, int(_RAM_BUDGET_SHOTS // avg_shots))
+
+        if len(candidates) > budget_files:
+            candidates = _spatial_sample(candidates, budget_files)
+
+        desired = {e.path for e in candidates}
+        cached = self._file_cache.paths()
+
+        to_evict = cached - desired
+        to_load  = desired - cached
+
+        for path in to_evict:
+            self._file_cache.evict(path)
+
+        if not to_load:
+            if to_evict:
+                self._rebuild_viewer_data()
+            return
+
+        paths_to_load = [e.path for e in candidates if e.path in to_load]
+        self._load_files_for_cache(paths_to_load)
+
+    def _load_files_for_cache(self, paths: list[Path]) -> None:
+        """Parse shot data for the given files on a background thread."""
+        if self._parse_thread is not None:
+            self._parse_thread.quit()
+            self._parse_thread.wait()
+
+        n = len(paths)
+        self._status_label.setText(f"  Loading {n} files…")
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        QApplication.processEvents()
+
+        thread = QThread(self)
+        worker = _MultiParseWorker(paths)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(
+            lambda cur, tot: self._status_label.setText(
+                f"  Loading file {cur}/{tot}…"
+            )
+        )
+        worker.finished.connect(self._on_cache_load_finished)
+        worker.finished.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._on_parse_thread_done)
+        self._parse_thread = thread
+        self._parse_worker = worker
+        thread.start()
+
+    def _on_cache_load_finished(self, results, error) -> None:
+        QApplication.restoreOverrideCursor()
+        if results is None:
+            self._status_label.setText(f"  Error: {error}")
+            return
+
+        for data, path in results:
+            ox = np.float64(data.header.stripeOriginX)
+            oy = np.float64(data.header.stripeOriginY)
+            data.x = data.x.astype(np.float64) + ox
+            data.y = data.y.astype(np.float64) + oy
+            self._file_cache.put(path, data)
+
+        self._rebuild_viewer_data()
+
+    def _rebuild_viewer_data(self) -> None:
+        """Rebuild the merged PassData from cache and push to the viewer."""
+        if self._file_cache is None:
+            return
+        cached_paths = sorted(self._file_cache.paths())
+        pairs = [(self._file_cache.get(p), p) for p in cached_paths]
+        pairs = [(d, p) for d, p in pairs if d is not None]
+        if not pairs:
+            return
+
+        merged = PassData(
+            header=pairs[-1][0].header,
+            x=np.concatenate([d.x for d, _ in pairs]),
+            y=np.concatenate([d.y for d, _ in pairs]),
+            dwell=np.concatenate([d.dwell for d, _ in pairs]),
+            count=sum(d.count for d, _ in pairs),
+        )
+
+        # _loaded_files: thin copies (header + count only) for selection pane
+        # bookkeeping — avoids storing shot arrays twice in RAM.
+        self._loaded_files = []
+        for d, p in pairs:
+            thin = PassData(
+                header=d.header,
+                x=np.empty(0, dtype=np.float64),
+                y=np.empty(0, dtype=np.float64),
+                dwell=np.empty(0, dtype=np.float32),
+                count=d.count,
+            )
+            self._loaded_files.append((thin, p))
+        self._file_selected.clear()
+
+        fit = self._lazy_first_load
+        self._lazy_first_load = False
+        self._viewer.load_data(merged, fit_view=fit)
+        self._selection_pane.set_data(merged)
+
+        counts = [d.count for d, _ in pairs]
+        self._selection_pane.set_file_boundaries(
+            [p.name for _, p in pairs], counts
+        )
+        offsets, running = [], 0
+        for c in counts:
+            offsets.append(running)
+            running += c
+        self._viewer.set_file_break_offsets(offsets)
+
+        regions = []
+        for d, p in pairs:
+            h = d.header
+            regions.append({
+                "name": p.name, "shots": d.count,
+                "originX": h.stripeOriginX, "originY": h.stripeOriginY,
+                "width": h.stripeWidth, "length": h.stripeLength,
+                "subFieldHeight": h.subFieldHeight, "overlap": h.overlap,
+            })
+        self._viewer.set_stripe_regions(regions)
+        self._restore_pinned_stripes()
+
+        n_loaded = len(pairs)
+        n_total = len(self._file_index.entries) if self._file_index else n_loaded
+        total_size_mb = sum(p.stat().st_size for _, p in pairs) / (1024 * 1024)
+        self.setWindowTitle(f"Pass File Viewer — {n_loaded}/{n_total} files")
+        base = (f"  {n_loaded}/{n_total} files  |  "
+                f"Shots: {merged.count:,}  |  "
+                f"Loaded: {total_size_mb:.0f} MB")
+        if self._viewer._kdtree is None:
+            base += "  |  Building spatial index…"
+        self._status_label.setText(base)
+
+    def _on_viewport_rect_changed(self, x0: float, x1: float,
+                                   y0: float, y1: float) -> None:
+        """Receive viewport change from viewer; debounce before updating files."""
+        if self._file_index is None:
+            return   # not in lazy-loading mode
+        self._pending_viewport = (x0, x1, y0, y1)
+        self._viewport_debounce_timer.start(500)
+
+    def _on_viewport_debounce_done(self) -> None:
+        if self._pending_viewport is not None:
+            x0, x1, y0, y1 = self._pending_viewport
+            self._pending_viewport = None
+            self._update_viewport_files(x0, x1, y0, y1)
 
     def closeEvent(self, event) -> None:
         self._media_player.stop()

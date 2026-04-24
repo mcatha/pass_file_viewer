@@ -530,6 +530,9 @@ class ShotViewerWidget(QWidget):
     # Emitted when a single shot is click-selected (-1 means deselected).
     shot_clicked = pyqtSignal(int)
 
+    # Emitted when the viewport rect changes (absolute wafer coords: x0, x1, y0, y1).
+    viewport_rect_changed = pyqtSignal(float, float, float, float)
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
 
@@ -860,7 +863,7 @@ class ShotViewerWidget(QWidget):
 
     # ── public API ──────────────────────────────────────────────────
 
-    def load_data(self, data: PassData, keep_origin: bool = False) -> None:
+    def load_data(self, data: PassData, keep_origin: bool = False, fit_view: bool = True) -> None:
         """Load parsed pass data and render shots.
 
         Parameters
@@ -1002,7 +1005,8 @@ class ShotViewerWidget(QWidget):
         self._rotation_deg = 0.0
         self._visual_root.transform = scene.transforms.MatrixTransform()
         self._last_cam_sig = None  # force arrow/axis reposition after origin change
-        self._fit_view()
+        if fit_view:
+            self._fit_view()
 
         # Reposition wafer outline if active (centroid changed)
         if self._wafer_diameter_nm is not None:
@@ -2205,6 +2209,13 @@ class ShotViewerWidget(QWidget):
         # Throttled shot stride update on zoom
         if self._all_positions is not None:
             self._shot_decim_timer.start()
+            bounds = self._get_viewport_bounds()
+            if bounds is not None:
+                ox, oy = float(self._origin[0]), float(self._origin[1])
+                xmin, xmax, ymin, ymax = bounds
+                self.viewport_rect_changed.emit(
+                    xmin + ox, xmax + ox, ymin + oy, ymax + oy
+                )
 
         # Reposition ruler label
         if self._ruler_start is not None:

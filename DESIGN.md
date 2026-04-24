@@ -822,10 +822,68 @@ pass_viewer/
 
 ## 17. Known Limitations
 
-1. **Single-file viewer** — no multi-file or stripe-sequence viewing
-2. **2D only** — no 3D perspective or Z-axis support
-3. **No shape record rendering** — only shot records (mID == 0) are displayed
-4. **Debug prints** — diagnostic print statements (`[disc]`, `[gauss]`, `[SEL]`, `[stride]`, `[upload]`, `[axis]`, `[INIT]`, `[load]`) are still active in `viewer_widget.py`
+1. **No shape record rendering** — only shot records (mID == 0) are displayed
+2. **No zoom-in reload** — when in lazy-loading mode, shots outside the initially-loaded spatial sample are inaccessible until the user zooms in and the viewport update triggers their files to load
+3. **Debug prints** — diagnostic print statements (`[disc]`, `[gauss]`, `[SEL]`, `[stride]`, `[upload]`, `[axis]`, `[INIT]`, `[load]`) are still active in `viewer_widget.py`
+
+---
+
+## 19. Viewport-Aware Lazy Loading
+
+### Problem
+
+Opening a full MB300 logo write (~14 490 files, ~100 GB, ~12.5 B shots) requires
+~200 GB RAM with the original approach (all shots decoded into float64 x/y arrays).
+Target machines have 16–64 GB.
+
+### Solution
+
+**For multi-file opens exceeding `_LAZY_LOAD_BYTES` (400 MB):**
+
+1. **Header scan** — `_HeaderScanWorker` reads only the first 78 bytes of each
+   file (or its `.pass.meta`) using a 32-thread pool.  Builds a `FileIndex` of
+   `FileEntry` objects (spatial bounding box + shot count) without loading any
+   shot data.  Typically completes in 1–5 s for 14 000+ files on a local SSD.
+
+2. **`FileIndex`** — list of `FileEntry` dataclasses with spatial bbox query
+   (`FileIndex.query(x0, y0, x1, y1) → list[FileEntry]`).
+
+3. **`FileCache`** — LRU cache of parsed `PassData` objects bounded by
+   `_RAM_BUDGET_SHOTS = 50_000_000` (≈1.8 GB).  `put()` evicts oldest entries
+   when adding a new file would exceed the budget.
+
+4. **`_update_viewport_files(x0, x1, y0, y1)`** — called after header scan and
+   on every debounced viewport change (500 ms):
+   - Queries `FileIndex` for candidates intersecting the viewport.
+   - If candidates exceed `budget_files` (= `_RAM_BUDGET_SHOTS / avg_shots`),
+     spatially samples `budget_files` entries from the full candidate set
+     (`_spatial_sample`: sort by origin, take every K-th).
+   - Evicts cached files no longer in the desired set.
+   - Dispatches `_MultiParseWorker` to load any missing files.
+
+5. **`_rebuild_viewer_data()`** — merges cached files into a single `PassData`
+   and calls `viewer.load_data(merged, fit_view=fit)`.  Uses thin `PassData`
+   copies (empty arrays, correct `count`) in `_loaded_files` to avoid storing
+   shot coordinates twice.  `fit_view=True` only on first load.
+
+6. **Viewport signal** — `ShotViewerWidget.viewport_rect_changed(x0, x1, y0, y1)`
+   is emitted on every camera change and consumed by `MainWindow` to drive
+   `_update_viewport_files` via a 500 ms debounce timer.
+
+### Constants
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `_LAZY_LOAD_BYTES` | 400 000 000 | Total file size threshold to activate lazy loading |
+| `_RAM_BUDGET_SHOTS` | 50 000 000 | Max shots kept in RAM cache at once |
+
+### Behaviour at different zoom levels
+
+| Zoom | Files in viewport | Loaded |
+|---|---|---|
+| Full wafer (all files) | 14 490 | Spatial sample (~58 files) — logo shape visible |
+| Region (1/250 of wafer) | ~58 | All in-viewport files — full shot resolution |
+| Single stripe | 1 | That file — every individual shot accessible |
 
 ---
 
