@@ -1184,7 +1184,7 @@ class MainWindow(QMainWindow):
         )
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(self._on_parse_thread_done)
+        thread.finished.connect(thread.deleteLater)
         self._parse_thread = thread
         self._parse_worker = worker
         thread.start()
