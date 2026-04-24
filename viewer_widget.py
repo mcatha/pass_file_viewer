@@ -176,6 +176,58 @@ class _KDTreeWorker(QObject):
         self.finished.emit((tree, self._rendered_indices))
 
 
+class _HoverWorker(QObject):
+    """Runs a KD-tree hover query on a background thread."""
+    finished = pyqtSignal(object, int, int)  # (orig_idx or None, mx, my)
+
+    def __init__(self, scene_pos: np.ndarray, min_radius_data: float,
+                 mx: int, my: int,
+                 kdtree, kdtree_indices,
+                 uniform_size, sizes: np.ndarray | None,
+                 marker_mode: str) -> None:
+        super().__init__()
+        self._scene_pos       = scene_pos
+        self._min_r           = min_radius_data
+        self._mx, self._my    = mx, my
+        self._kdtree          = kdtree
+        self._kdtree_indices  = kdtree_indices
+        self._uniform_size    = uniform_size
+        self._sizes           = sizes
+        self._marker_mode     = marker_mode
+
+    def run(self) -> None:
+        disc_mode = self._marker_mode == 'disc'
+        scale = _DISC_SIZE_SCALE if disc_mode else 1.0
+
+        if self._uniform_size is not None:
+            max_r = self._uniform_size * scale / 2.0
+        else:
+            max_r = float(np.max(self._sizes)) * scale / 2.0
+        search_r = max(max_r, self._min_r)
+        search_r = min(search_r, max(max_r * 10.0, 1.0))
+
+        idxs = self._kdtree.query_ball_point(self._scene_pos, r=search_r)
+        if not idxs:
+            self.finished.emit(None, self._mx, self._my)
+            return
+
+        centres = self._kdtree.data[idxs]
+        dists   = np.linalg.norm(centres - self._scene_pos, axis=1)
+        order   = np.argsort(dists)
+
+        result = None
+        for o in order:
+            i    = idxs[o]
+            d    = dists[o]
+            orig = int(self._kdtree_indices[i]) if self._kdtree_indices is not None else int(i)
+            sz   = self._uniform_size if self._uniform_size is not None else self._sizes[orig]
+            r    = sz * scale / 2.0
+            if d <= max(r, self._min_r):
+                result = orig
+                break
+        self.finished.emit(result, self._mx, self._my)
+
+
 class _ArgsortWorker(QObject):
     """Computes np.argsort on a priority array on a background thread."""
     finished = pyqtSignal(object)  # emits sorted index array (np.intp)
@@ -812,13 +864,11 @@ class ShotViewerWidget(QWidget):
         self._shot_decim_timer.setInterval(100)
         self._shot_decim_timer.timeout.connect(self._update_decim_stride)
 
-        # Mouse-move throttle: avoid KD-tree queries faster than display refresh
-        self._hover_timer = QTimer(self)
-        self._hover_timer.setSingleShot(True)
-        self._hover_timer.setInterval(100)  # query fires 100 ms after mouse stops
-        self._hover_timer.timeout.connect(self._do_hover_query)
-        self._pending_hover_pos: tuple[float, float] | None = None
-        self._pending_hover_px: tuple[int, int] = (0, 0)
+        # Asynchronous hover query state — no debounce, queries overlap is prevented
+        # by running at most one _HoverWorker at a time.
+        self._hover_worker_running: bool = False
+        self._hover_worker_thread: QThread | None = None
+        self._queued_hover_args: tuple | None = None
 
         # Stripe region hover state
         self._stripe_regions: list[dict] = []
@@ -1345,8 +1395,7 @@ class ShotViewerWidget(QWidget):
     def shutdown(self) -> None:
         """Stop all background threads and timers.  Call before the widget is destroyed."""
         self._shot_decim_timer.stop()
-        self._hover_timer.stop()
-        for attr in ('_kdtree_thread', '_argsort_thread', '_box_sel_thread'):
+        for attr in ('_kdtree_thread', '_argsort_thread', '_box_sel_thread', '_hover_worker_thread'):
             t = getattr(self, attr, None)
             if t is not None:
                 t.quit()
@@ -2369,10 +2418,24 @@ class ShotViewerWidget(QWidget):
         if self._kdtree is None and self._data is None:
             return
 
-        # Debounce: restart timer on every move so query fires only after mouse pauses
-        self._pending_hover_pos = (data_x, data_y)
-        self._pending_hover_px = (int(event.pos[0]), int(event.pos[1]))
-        self._hover_timer.start()
+        # Compute min_radius_data here (requires scene transform — main thread only).
+        try:
+            tr_h = self._canvas.scene.node_transform(self._visual_root)
+            p0_h = tr_h.map([0, 0, 0, 1])
+            p1_h = tr_h.map([1, 0, 0, 1])
+            min_r = 5.0 * abs(p1_h[0] - p0_h[0])
+        except Exception:
+            min_r = 0.0
+
+        args = (
+            np.array([data_x, data_y], dtype=np.float32),
+            min_r,
+            int(event.pos[0]), int(event.pos[1]),
+        )
+        if not self._hover_worker_running:
+            self._dispatch_hover(args)
+        else:
+            self._queued_hover_args = args
 
     def _hit_test(self, scene_pos: np.ndarray, min_radius_data: float) -> int | None:
         """Return the index of the shot under *scene_pos*, or None.
@@ -2598,32 +2661,33 @@ class ShotViewerWidget(QWidget):
             indices = None
         self._locked_indices = indices
 
-    def _do_hover_query(self) -> None:
-        """Perform the actual KD-tree hover lookup (throttled)."""
-        if self._pending_hover_pos is None:
+    def _dispatch_hover(self, args: tuple) -> None:
+        """Start a background hover query for *args* = (scene_pos, min_r, mx, my)."""
+        if self._kdtree is None:
             return
-        data_x, data_y = self._pending_hover_pos
-        mx, my = self._pending_hover_px
-        self._pending_hover_pos = None
+        scene_pos, min_r, mx, my = args
+        self._hover_worker_running = True
+        worker = _HoverWorker(
+            scene_pos, min_r, mx, my,
+            self._kdtree, self._kdtree_indices,
+            self._uniform_size,
+            self._sizes if self._uniform_size is None else None,
+            self._marker_mode,
+        )
+        thread = QThread(self)
+        self._hover_worker_thread = thread
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_hover_result)
+        worker.finished.connect(lambda *_: thread.quit())
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
 
-        if self._kdtree is None or self._data is None:
-            return
-
-        scene_pos = np.array([data_x, data_y], dtype=np.float32)
-
-        # Minimum hit radius: 5 pixels converted to data units.
-        try:
-            tr_h = self._canvas.scene.node_transform(self._visual_root)
-            p0_h = tr_h.map([0, 0, 0, 1])
-            p1_h = tr_h.map([1, 0, 0, 1])
-            min_radius_data = 5.0 * abs(p1_h[0] - p0_h[0])
-        except Exception:
-            min_radius_data = 0.0
-
-        idx = self._hit_test(scene_pos, min_radius_data)
+    def _on_hover_result(self, idx, mx: int, my: int) -> None:
+        """Apply hover query result from background thread."""
+        self._hover_worker_running = False
 
         if idx is not None:
-            # Don't show hover tooltip for the already-selected shot
             if idx == self._selected_idx:
                 self._hover_tooltip.setVisible(False)
             else:
@@ -2642,6 +2706,12 @@ class ShotViewerWidget(QWidget):
                 self._hover_tooltip.setVisible(True)
         else:
             self._hover_tooltip.setVisible(False)
+
+        # If the mouse moved while we were working, dispatch the queued position now.
+        if self._queued_hover_args is not None:
+            args = self._queued_hover_args
+            self._queued_hover_args = None
+            self._dispatch_hover(args)
 
     def _on_mouse_press(self, event) -> None:
         """Handle click-to-select, rubber-band start, and Shift+drag rotation."""
