@@ -1357,7 +1357,7 @@ class MainWindow(QMainWindow):
 
         fit = self._lazy_first_load
         self._lazy_first_load = False
-        self._viewer.load_data(merged, keep_origin=not fit, fit_view=fit)
+        self._viewer.load_data(merged, fit_view=fit)
         self._selection_pane.set_data(merged)
 
         counts = [d.count for d, _ in pairs]

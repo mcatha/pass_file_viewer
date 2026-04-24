@@ -974,16 +974,8 @@ class ShotViewerWidget(QWidget):
 
     # ── public API ──────────────────────────────────────────────────
 
-    def load_data(self, data: PassData, keep_origin: bool = False, fit_view: bool = True) -> None:
-        """Load parsed pass data and render shots.
-
-        Parameters
-        ----------
-        keep_origin : bool
-            When True, the existing centroid origin is preserved instead of
-            being recomputed from the new data.  Use this for incremental
-            loads so the camera position stays stable as new files are added.
-        """
+    def load_data(self, data: PassData, fit_view: bool = True) -> None:
+        """Load parsed pass data and render shots."""
         self._data = data
         self._lines_data_set = False
         self._kdtree = None
@@ -1013,8 +1005,6 @@ class ShotViewerWidget(QWidget):
         # Write directly into a float32 output via np.subtract to avoid allocating
         # an intermediate (N,2) float64 array (would be ~23 GiB at 1.5B shots).
         n = len(data.x)
-        if not keep_origin:
-            self._origin = np.array([data.x.mean(), data.y.mean()], dtype=np.float64)
         self._positions = np.empty((n, 2), dtype=np.float32)
         np.subtract(data.x, self._origin[0], out=self._positions[:, 0])
         np.subtract(data.y, self._origin[1], out=self._positions[:, 1])
@@ -1136,7 +1126,7 @@ class ShotViewerWidget(QWidget):
         Falls back to a full load if no data is currently loaded.
         """
         if self._all_positions is None or self._origin is None:
-            self.load_data(new_data, keep_origin=False)
+            self.load_data(new_data)
             return
 
         # ── Process only the new shots ──────────────────────────────────────
