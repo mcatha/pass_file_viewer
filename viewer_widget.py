@@ -1504,11 +1504,11 @@ class ShotViewerWidget(QWidget):
             canvas_px = max(self._canvas.native.width(), 1)
             dpp = float(r.width) / canvas_px if r.width > 0 else 1.0
 
-        # Pixel sizes: full at dpp ≤ 300 nm/px, shrink beyond that.
+        # Pixel sizes: full at dpp ≤ 300 nm/px, shrink to 1px beyond that.
         _DPP_REF = 300.0
         scale = min(1.0, (_DPP_REF / max(dpp, _DPP_REF)) ** 0.75)
         halo_px = max(2, round(32 * scale))
-        core_px = max(1, round(10 * scale))
+        core_px = max(2, round(10 * scale))
 
         # Halo: large soft disc
         self._shot1_halo.set_data(
@@ -2304,6 +2304,10 @@ class ShotViewerWidget(QWidget):
                 self.viewport_rect_changed.emit(
                     xmin + ox, xmax + ox, ymin + oy, ymax + oy
                 )
+
+        # Shot-1 marker sizes track zoom immediately (not throttled)
+        if self._lines.visible:
+            self._update_shot1_markers()
 
         # Reposition ruler label
         if self._ruler_start is not None:
