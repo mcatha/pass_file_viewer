@@ -1197,14 +1197,13 @@ class MainWindow(QMainWindow):
         )
         worker.finished.connect(thread.quit)
         thread.finished.connect(worker.deleteLater)
-        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_parse_thread_done)
         self._parse_thread = thread
         self._parse_worker = worker
         thread.start()
 
     def _on_header_scan_done(self, entries, error, extend: bool = False) -> None:
-        self._parse_thread = None
-        self._parse_worker = None
+        # _parse_thread / _parse_worker cleared by _on_parse_thread_done (thread.finished)
         QApplication.restoreOverrideCursor()
         if entries is None:
             QMessageBox.critical(self, "Error", f"Failed to scan headers:\n{error}")
