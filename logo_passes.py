@@ -109,9 +109,8 @@ _lum  = (0.299 * _arr[:, :, 0].astype(np.float32)
        + 0.114 * _arr[:, :, 2].astype(np.float32)) / 255.0
 _alp  = _arr[:, :, 3].astype(np.float32) / 255.0
 _on_white = _lum * _alp + (1.0 - _alp)   # composite onto white background
-_dark = _on_white < 0.5
-DARK_MASK = _dark[::-1, :]   # row 0 → bottom of logo on wafer
-H_PX, W_PX = DARK_MASK.shape
+_VAL_MASK = _on_white[::-1, :]            # float [0,1]; row 0 → bottom; <0.5 is dark
+H_PX, W_PX = _VAL_MASK.shape
 
 # ── Pre-compute Y grids for each distinct Y section ───────────────────────────
 # Keyed by (y_sec_start, y_sec_end).
@@ -122,11 +121,10 @@ for _, _, _, _, ys, ye in BEAM_COLUMNS:
         continue
     sec_len = ye - ys
     Y_LOC = np.arange(HALF, sec_len, PITCH_NM, dtype=np.int64)
-    # wafer_Y = y_local + ys  →  image row = (wafer_Y − LOGO_Y_MIN) × H_PX / LOGO_HEIGHT_NM
-    IY_raw = (Y_LOC + ys - LOGO_Y_MIN) * H_PX // LOGO_HEIGHT_NM
-    valid_y = (IY_raw >= 0) & (IY_raw < H_PX)
-    IY_ = np.clip(IY_raw, 0, H_PX - 1).astype(np.int32)
-    _y_grids[key] = (Y_LOC, IY_, valid_y)
+    # Float pixel coordinate (0 = top of pixel[0]); -0.5 offset centres shots on pixels.
+    IY_f = (Y_LOC + ys - LOGO_Y_MIN) * H_PX / LOGO_HEIGHT_NM - 0.5
+    valid_y = (IY_f >= -0.5) & (IY_f < H_PX - 0.5)
+    _y_grids[key] = (Y_LOC, IY_f, valid_y)
 
 # ── v4 header (78 bytes, little-endian) ───────────────────────────────────────
 _HDR_FMT = "<IHHiiIIdHHdiQQQI??"
@@ -173,13 +171,24 @@ for n in range(1, N_MASTER + 1):
             continue
 
         x_abs = x_start + x_local
-        IX = np.clip(
-            (x_abs - LOGO_X_MIN) * W_PX // LOGO_WIDTH_NM,
-            0, W_PX - 1,
-        ).astype(np.int32)
+        IX_f = (x_abs - LOGO_X_MIN) * W_PX / LOGO_WIDTH_NM - 0.5
 
-        Y_LOCAL, IY, valid_y = _y_grids[(ys_start, ys_end)]
-        hit = DARK_MASK[IY[:, None], IX[None, :]]
+        Y_LOCAL, IY_f, valid_y = _y_grids[(ys_start, ys_end)]
+
+        # Bilinear interpolation on _VAL_MASK for sub-pixel-accurate edges.
+        iy0 = np.clip(np.floor(IY_f).astype(np.int32), 0, H_PX - 2)
+        ix0 = np.clip(np.floor(IX_f).astype(np.int32), 0, W_PX - 2)
+        iy1 = iy0 + 1
+        ix1 = ix0 + 1
+        wy1 = np.clip(IY_f - iy0, 0.0, 1.0).astype(np.float32)[:, None]
+        wy0 = 1.0 - wy1
+        wx1 = np.clip(IX_f - ix0, 0.0, 1.0).astype(np.float32)[None, :]
+        wx0 = 1.0 - wx1
+        sampled = (wy0 * (wx0 * _VAL_MASK[iy0[:, None], ix0[None, :]]
+                        + wx1 * _VAL_MASK[iy0[:, None], ix1[None, :]])
+                 + wy1 * (wx0 * _VAL_MASK[iy1[:, None], ix0[None, :]]
+                        + wx1 * _VAL_MASK[iy1[:, None], ix1[None, :]]))
+        hit = sampled < 0.5
         hit[~valid_y, :] = False
 
         sy, sx = np.nonzero(hit)
