@@ -693,16 +693,16 @@ class ShotViewerWidget(QWidget):
         self._sel_lines.visible = False
 
         # Shot-1 lens-flare markers: halo (large, faint) + core (small, bright)
-        # Only visible when connecting lines are on.  Fixed pixel size so they
-        # don't shrink away on zoom-out.
+        # Only visible when connecting lines are on.  Sizes in data units (nm)
+        # so they scale down naturally on zoom-out.
         self._shot1_halo = visuals.Markers(parent=self._visual_root, antialias=4,
-                                           scaling='fixed', symbol='disc',
+                                           scaling='scene', symbol='disc',
                                            method='instanced')
         self._shot1_halo.set_gl_state('translucent', depth_test=False)
         self._shot1_halo.visible = False
 
         self._shot1_core = visuals.Markers(parent=self._visual_root, antialias=2,
-                                           scaling='fixed', symbol='disc',
+                                           scaling='scene', symbol='disc',
                                            method='instanced')
         self._shot1_core.set_gl_state('translucent', depth_test=False)
         self._shot1_core.visible = False
@@ -1492,10 +1492,19 @@ class ShotViewerWidget(QWidget):
 
         shot1_pos = self._positions[np.array(self._file_break_offsets, dtype=np.intp)]
 
+        if self._uniform_size is not None:
+            shot_nm = float(self._uniform_size)
+        elif self._all_sizes is not None:
+            shot_nm = float(np.median(self._all_sizes))
+        else:
+            shot_nm = 1600.0
+        halo_nm = shot_nm * 5.0
+        core_nm = shot_nm * 1.5
+
         # Halo: large soft disc
         self._shot1_halo.set_data(
             shot1_pos,
-            size=28,
+            size=halo_nm,
             face_color=(1.0, 1.0, 0.85, 0.55),
             edge_width=0,
         )
@@ -1504,7 +1513,7 @@ class ShotViewerWidget(QWidget):
         # Core: small bright disc
         self._shot1_core.set_data(
             shot1_pos,
-            size=8,
+            size=core_nm,
             face_color=(1.0, 1.0, 0.75, 0.90),
             edge_width=0,
         )
