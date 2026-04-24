@@ -837,7 +837,7 @@ pass_viewer/
 ## 17. Known Limitations
 
 1. **No shape record rendering** — only shot records (mID == 0) are displayed
-2. **No zoom-in reload** — when in lazy-loading mode, shots outside the initially-loaded spatial sample are inaccessible until the user zooms in and the viewport update triggers their files to load
+2. **No inter-file zoom-in reload** — zooming into a region does not immediately re-read files at stride 1; the viewport debounce (500 ms) triggers `_update_viewport_files`, which recomputes stride for the new viewport and evicts/reloads as needed
 3. **Debug prints** — diagnostic print statements (`[disc]`, `[gauss]`, `[SEL]`, `[stride]`, `[upload]`, `[axis]`, `[INIT]`, `[load]`) are still active in `viewer_widget.py`
 
 ---
@@ -865,18 +865,27 @@ real chip writes are unknown, as this is a new technology.  Target machines have
 2. **`FileIndex`** — list of `FileEntry` dataclasses with spatial bbox query
    (`FileIndex.query(x0, y0, x1, y1) → list[FileEntry]`).
 
-3. **`FileCache`** — LRU cache of parsed `PassData` objects bounded by
-   `_RAM_BUDGET_SHOTS = 50_000_000` (≈1.8 GB).  `put()` evicts oldest entries
-   when adding a new file would exceed the budget.
+3. **`FileCache`** — cache of parsed `PassData` objects keyed by `(Path, stride)`
+   and bounded by `_RAM_BUDGET_SHOTS = 50_000_000` (≈1.8 GB).  Including stride
+   in the key means a zoom change that raises or lowers the stride automatically
+   invalidates stale cache entries.  `put()` evicts LRU entries when the
+   total shot count would exceed the budget.
 
 4. **`_update_viewport_files(x0, x1, y0, y1)`** — called after header scan and
    on every debounced viewport change (500 ms):
-   - Queries `FileIndex` for candidates intersecting the viewport.
-   - If candidates exceed `budget_files` (= `_RAM_BUDGET_SHOTS / avg_shots`),
-     spatially samples `budget_files` entries from the full candidate set
-     (`_spatial_sample`: sort by origin, take every K-th).
-   - Evicts cached files no longer in the desired set.
-   - Dispatches `_MultiParseWorker` to load any missing files.
+   - Queries `FileIndex` for all candidates intersecting the viewport.
+   - Computes `stride = ceil(total_candidate_shots / _RAM_BUDGET_SHOTS)`.
+     All candidate files are loaded; stride > 1 thins the shot records so the
+     in-RAM total stays within budget.
+   - Evicts cached `(path, stride)` pairs no longer in the desired set.
+   - Dispatches `_MultiParseWorker` to load any missing `(path, stride)` pairs.
+
+   **Why adaptive stride beats spatial sampling:** spatial sampling opened ~50
+   scattered files per viewport update (random I/O across the directory), which
+   both looked wrong (thin stripes instead of full pattern) and was slower.
+   Adaptive stride opens every file but reads only every N-th record — sequential
+   I/O within each file followed by a fast numpy slice is much cheaper than
+   scattered seeks.
 
 5. **`_rebuild_viewer_data()`** — merges cached files into a single `PassData`
    and calls `viewer.load_data(merged, fit_view=fit)`.  Uses thin `PassData`
@@ -898,9 +907,9 @@ real chip writes are unknown, as this is a new technology.  Target machines have
 
 | Zoom | Files in viewport | Loaded |
 |---|---|---|
-| Full wafer (all files) | N (all) | Spatial sample capped at `_RAM_BUDGET_SHOTS / avg_shots` — pattern shape visible |
-| Sub-region | Fraction of N | All in-viewport files (if within budget) — full shot resolution |
-| Single stripe | 1 | That file — every individual shot accessible |
+| Full wafer (all files) | N (all) | All files loaded at stride K — full pattern visible, thinned |
+| Sub-region | Fraction of N | All in-viewport files, lower stride (more shots per file) |
+| Single stripe | 1 | That file at stride 1 — every individual shot accessible |
 
 ---
 
