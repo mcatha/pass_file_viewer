@@ -889,6 +889,7 @@ class ShotViewerWidget(QWidget):
         self._all_positions: np.ndarray | None = None  # full (N,2) float32
         self._all_sizes: np.ndarray | float | None = None  # full sizes
         self._raw_dwells: np.ndarray | None = None  # raw dwell values (ns)
+        self._true_total_shots: int = 0  # total shots across all files (unstrided); 0 = unknown
         self._fwhm_scale: float = 10.0   # multiplier on _NM_PER_NS_DWELL (default 100 nm/µs)
         self._stride_inflate_amp: float = _STRIDE_INFLATE_AMP  # hardcoded
         self._alpha_comp_power: float = 1.0  # hardcoded: alpha /= stride_scale
@@ -1101,6 +1102,10 @@ class ShotViewerWidget(QWidget):
 
         if self._density_enabled:
             self._rebuild_density_image()
+
+    def set_true_total_shots(self, n: int) -> None:
+        """Set the true unstrided shot count for display purposes."""
+        self._true_total_shots = n
 
     def append_data(self, new_data: PassData) -> None:
         """Append shots from new_data without re-processing the existing dataset.
@@ -1914,7 +1919,8 @@ class ShotViewerWidget(QWidget):
         self._uploaded_sizes = dsizes
         self._upload_view(dpos, dsizes, stride=stride)
         self._build_kdtree_async(dpos, idx)
-        self._shot_count_label.setText(f"{len(dpos):,} / {n:,} shots")
+        total_display = self._true_total_shots if self._true_total_shots > 0 else n
+        self._shot_count_label.setText(f"{len(dpos):,} / {total_display:,} shots")
         self._shot_count_label.adjustSize()
         self._shot_count_label.setVisible(True)
 
@@ -2133,7 +2139,8 @@ class ShotViewerWidget(QWidget):
         # Always update status label
         rendered = len(getattr(self, '_uploaded_positions', []))
         alpha = getattr(self, '_last_overlap_alpha', 0.0)
-        parts = [f"{n:,} total"]
+        total_display = self._true_total_shots if self._true_total_shots > 0 else n
+        parts = [f"{total_display:,} total"]
         parts.append(f"{n_vis:,} visible")
         if stride > 1.0:
             parts.append(f"stride {stride:.1f}")

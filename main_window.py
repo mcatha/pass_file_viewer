@@ -1356,6 +1356,7 @@ class MainWindow(QMainWindow):
 
         fit = self._lazy_first_load
         self._lazy_first_load = False
+        self._viewer.set_true_total_shots(self._viewport_true_shots)
         self._viewer.load_data(merged, fit_view=fit)
         self._selection_pane.set_data(merged)
 
