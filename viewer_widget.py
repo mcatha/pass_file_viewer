@@ -1495,7 +1495,7 @@ class ShotViewerWidget(QWidget):
 
         # Pixel sizes: full at dpp ≤ 300 nm/px, shrink beyond that.
         _DPP_REF = 300.0
-        scale = min(1.0, (_DPP_REF / max(dpp, _DPP_REF)) ** 0.75) if dpp else 1.0
+        scale = min(1.0, (_DPP_REF / max(dpp, _DPP_REF)) ** 0.75) if dpp is not None and dpp > 0 else 1.0
         halo_px = max(2, round(32 * scale))
         core_px = max(1, round(10 * scale))
 
@@ -1516,6 +1516,7 @@ class ShotViewerWidget(QWidget):
             edge_width=0,
         )
         self._shot1_core.visible = True
+        self._canvas.update()
 
     def set_lines_visible(self, visible: bool) -> None:
         """Toggle shot connection lines."""
