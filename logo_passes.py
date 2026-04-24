@@ -105,7 +105,8 @@ _lum  = (0.299 * _arr[:, :, 0].astype(np.float32)
        + 0.587 * _arr[:, :, 1].astype(np.float32)
        + 0.114 * _arr[:, :, 2].astype(np.float32)) / 255.0
 _alp  = _arr[:, :, 3].astype(np.float32) / 255.0
-_dark = (_lum * _alp) < 0.5
+_on_white = _lum * _alp + (1.0 - _alp)   # composite onto white background
+_dark = _on_white < 0.5
 DARK_MASK = _dark[::-1, :]   # row 0 → bottom of logo on wafer
 H_PX, W_PX = DARK_MASK.shape
 
