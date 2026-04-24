@@ -53,7 +53,7 @@ LOGO_Y_MAX =   LOGO_HEIGHT_NM + LOGO_Y_MIN   # ≈ +30_208_334
 
 PITCH_NM      = 1275     # shot pitch
 PASS_WIDTH_NM = 60_000   # 60 µm stage X step
-DWELL_NS      = 16_383   # 14-bit maximum
+DWELL_NS      = 16_000   # 16 µs
 HALF          = PITCH_NM // 2
 
 # ── MB300 columns (from viewer_widget._MB300_FIDUCIALS) ──────────────────────

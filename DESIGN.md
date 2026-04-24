@@ -747,9 +747,9 @@ Only C-row cells (Y section ±32.5 mm) overlap the logo's ±30.2 mm Y extent. Al
 | Parameter | Value |
 |---|---|
 | Logo size | 250 mm × 60.42 mm (250 000 000 × 60 416 667 nm), centred on wafer |
-| Shot pitch | 1275 nm (22% overlap at 1638 nm beam FWHM) |
-| Beam FWHM | 1638 nm (dwell 16 383 ns × 100 nm/µs viewer default) |
-| Dwell | 16 383 ns (14-bit maximum) |
+| Shot pitch | 1275 nm (20% overlap at 1600 nm beam FWHM) |
+| Beam FWHM | 1600 nm (dwell 16 000 ns × 100 nm/µs viewer default) |
+| Dwell | 16 000 ns (16 µs) |
 | Pass width (X step) | 60 000 nm (60 µm) |
 
 ### Image sampling
