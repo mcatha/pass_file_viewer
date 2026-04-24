@@ -1223,6 +1223,7 @@ class ShotViewerWidget(QWidget):
 
         # Recompute stride/alpha for the current camera — _upload_all_shots uses a
         # static initial stride and doesn't know the zoom level.
+        self._last_view_key = None
         self._shot_decim_timer.start()
 
         if self._density_enabled:
