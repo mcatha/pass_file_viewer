@@ -693,16 +693,16 @@ class ShotViewerWidget(QWidget):
         self._sel_lines.visible = False
 
         # Shot-1 lens-flare markers: halo (large, faint) + core (small, bright)
-        # Only visible when connecting lines are on.  Sizes in data units (nm)
-        # so they scale down naturally on zoom-out.
+        # Only visible when connecting lines are on.  Fixed screen-pixel scaling;
+        # sizes are recomputed on each zoom change with sqrt falloff.
         self._shot1_halo = visuals.Markers(parent=self._visual_root, antialias=4,
-                                           scaling='scene', symbol='disc',
+                                           scaling='fixed', symbol='disc',
                                            method='instanced')
         self._shot1_halo.set_gl_state('translucent', depth_test=False)
         self._shot1_halo.visible = False
 
         self._shot1_core = visuals.Markers(parent=self._visual_root, antialias=2,
-                                           scaling='scene', symbol='disc',
+                                           scaling='fixed', symbol='disc',
                                            method='instanced')
         self._shot1_core.set_gl_state('translucent', depth_test=False)
         self._shot1_core.visible = False
@@ -1483,7 +1483,7 @@ class ShotViewerWidget(QWidget):
         parts.append(pos[prev:])
         return np.concatenate(parts)
 
-    def _update_shot1_markers(self) -> None:
+    def _update_shot1_markers(self, dpp: float | None = None) -> None:
         """Upload halo + core markers at shot 1 of each file, or hide if lines are off."""
         if self._positions is None or not self._lines.visible or not self._file_break_offsets:
             self._shot1_halo.visible = False
@@ -1492,19 +1492,17 @@ class ShotViewerWidget(QWidget):
 
         shot1_pos = self._positions[np.array(self._file_break_offsets, dtype=np.intp)]
 
-        if self._uniform_size is not None:
-            shot_nm = float(self._uniform_size)
-        elif self._all_sizes is not None:
-            shot_nm = float(np.median(self._all_sizes))
-        else:
-            shot_nm = 1600.0
-        halo_nm = shot_nm * 5.0
-        core_nm = shot_nm * 1.5
+        # Pixel sizes: full at dpp ≤ 300 nm/px, shrink as sqrt beyond that,
+        # floor at minimum so they never disappear.
+        _DPP_REF = 300.0
+        scale = min(1.0, (_DPP_REF / max(dpp, _DPP_REF)) ** 0.5) if dpp else 1.0
+        halo_px = max(10, round(52 * scale))
+        core_px = max(4,  round(18 * scale))
 
         # Halo: large soft disc
         self._shot1_halo.set_data(
             shot1_pos,
-            size=halo_nm,
+            size=halo_px,
             face_color=(1.0, 1.0, 0.85, 0.55),
             edge_width=0,
         )
@@ -1513,7 +1511,7 @@ class ShotViewerWidget(QWidget):
         # Core: small bright disc
         self._shot1_core.set_data(
             shot1_pos,
-            size=core_nm,
+            size=core_px,
             face_color=(1.0, 1.0, 0.75, 0.90),
             edge_width=0,
         )
@@ -2148,6 +2146,8 @@ class ShotViewerWidget(QWidget):
                 self._upload_box_sel_markers()
 
         # Always update status label
+        if self._lines.visible:
+            self._update_shot1_markers(dpp)
         rendered = len(getattr(self, '_uploaded_positions', []))
         alpha = getattr(self, '_last_overlap_alpha', 0.0)
         total_display = self._true_total_shots if self._true_total_shots > 0 else n
