@@ -1279,7 +1279,6 @@ class MainWindow(QMainWindow):
     def _load_files_for_cache(self, paths: list[Path], stride: int = 1) -> None:
         """Parse shot data for the given files on a background thread."""
         if self._parse_thread is not None:
-            QApplication.restoreOverrideCursor()
             self._parse_thread.quit()
             self._parse_thread.wait()
 
@@ -1287,7 +1286,6 @@ class MainWindow(QMainWindow):
         stride_note = f" (stride {stride})" if stride > 1 else ""
         self._status_label.setText(f"  Loading {n} files{stride_note}…")
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        QApplication.processEvents()
 
         thread = QThread(self)
         worker = _MultiParseWorker(paths, stride)
