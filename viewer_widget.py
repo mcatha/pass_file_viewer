@@ -1115,8 +1115,8 @@ class ShotViewerWidget(QWidget):
         # Reset rotation
         self._rotation_deg = 0.0
         self._visual_root.transform = scene.transforms.MatrixTransform()
-        self._last_cam_sig = None  # force arrow/axis reposition after origin change
         if fit_view:
+            self._last_cam_sig = None  # force arrow/axis reposition after origin change
             self._fit_view()
 
         # Reposition wafer outline if active (centroid changed)
