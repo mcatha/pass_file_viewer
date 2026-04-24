@@ -1279,6 +1279,7 @@ class MainWindow(QMainWindow):
     def _load_files_for_cache(self, paths: list[Path], stride: int = 1) -> None:
         """Parse shot data for the given files on a background thread."""
         if self._parse_thread is not None:
+            QApplication.restoreOverrideCursor()
             self._parse_thread.quit()
             self._parse_thread.wait()
 
